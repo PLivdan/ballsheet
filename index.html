@@ -86,6 +86,13 @@ td.num,th.num{text-align:right}
 .btnrow button{background:var(--panel);border:1px solid var(--line);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:14px;padding:12px 26px;cursor:pointer}
 .btnrow button:hover{border-color:var(--cursor)}
 .btnrow button.pri{background:var(--target);border-color:var(--target);color:#fff;font-weight:700}
+.mchip{background:var(--panel2);border:1px solid var(--line);border-radius:20px;color:var(--text);font-family:var(--mono);font-size:12px;padding:5px 14px;cursor:pointer;margin:0 6px 6px 0}
+.mchip:hover{border-color:var(--dim)}
+.mchip.sel{border-color:var(--cursor);color:var(--cursor)}
+.half{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:560px){.half{grid-template-columns:1fr}}
+#progress .chartcard{margin-top:12px}
+#ptable{max-height:240px;overflow-y:auto;display:none}
 #paused .box,#touchwall .box{margin:auto;text-align:center}
 #paused h2,#touchwall h2{font-size:34px;letter-spacing:6px;color:#fff}
 #paused p,#touchwall p{color:var(--dim);margin-top:12px;font-size:14px;line-height:1.8}
@@ -123,7 +130,7 @@ td.num,th.num{text-align:right}
     <div class="playrow"><button id="play">▶ &nbsp;PLAY</button></div>
     <p class="keys"><kbd>R</kbd> restart · <kbd>E</kbd> menu · <kbd>1</kbd>–<kbd>7</kbd> modes · <kbd>F</kbd> fullscreen · <kbd>Esc</kbd> release mouse</p>
     <div class="card" id="histcard">
-      <h2>Recent runs</h2>
+      <h2 style="display:flex;justify-content:space-between;align-items:center">Recent runs <button class="tbtn" id="progbtn">view progress →</button></h2>
       <div id="histbody"><p class="hint">No runs yet — your history is saved in this browser.</p></div>
     </div>
   </div>
@@ -163,8 +170,21 @@ td.num,th.num{text-align:right}
     </div>
     <div class="btnrow">
       <button class="pri" id="again">play again <kbd style="border-color:#ff9ab5">R</kbd></button>
+      <button id="rprog">progress</button>
       <button id="tomenu">menu <kbd>E</kbd></button>
     </div>
+  </div>
+</div>
+
+<div id="progress" class="screen" hidden>
+  <div class="wrap" style="width:min(700px,94vw)">
+    <div class="hero">
+      <div class="lbl">PROGRESS</div>
+      <div class="val" id="ptitle" style="font-size:32px">—</div>
+    </div>
+    <div id="pchips" style="text-align:center;margin-bottom:14px"></div>
+    <div id="pbody"></div>
+    <div class="btnrow"><button id="pback">menu <kbd>E</kbd></button></div>
   </div>
 </div>
 
@@ -665,6 +685,9 @@ document.addEventListener("keydown",e=>{
 $("paused").addEventListener("click",()=>{lockPointer()});
 $("again").addEventListener("click",()=>{resetGame();lockPointer()});
 $("tomenu").addEventListener("click",toMenu);
+$("progbtn").addEventListener("click",()=>showProgress());
+$("rprog").addEventListener("click",()=>showProgress(lastResult&&lastResult.mode));
+$("pback").addEventListener("click",showMenu);
 $("play").addEventListener("click",()=>{
   initAudio();
   if(actx&&actx.state==="suspended")actx.resume();
@@ -679,7 +702,7 @@ function toMenu(){
   if(document.pointerLockElement)document.exitPointerLock();
   showMenu();
 }
-function hideAll(){for(const id of["menu","results","paused"])$(id).hidden=true}
+function hideAll(){for(const id of["menu","results","paused","progress"])$(id).hidden=true}
 function show(el){hideAll();el.hidden=false}
 function showMenu(){renderModes();renderHistory();updateReadout();show($("menu"))}
 
@@ -925,6 +948,149 @@ function modeGlyph(p){
   return"<svg class='g' viewBox='0 0 30 20' aria-hidden='true'>"+
     "<circle cx='"+cx2+"' cy='10' r='"+fmt(rt,1)+"' fill='#e65078'/>"+
     "<circle cx='"+fmt(cx1,1)+"' cy='10' r='"+fmt(rc,1)+"' fill='#64c8ff' fill-opacity='0.92'/></svg>";
+}
+
+const MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function fmtDate(ts){const d=new Date(ts);return MONTHS[d.getMonth()]+" "+d.getDate()}
+function fmtDur(s){return s<3600?Math.round(s/60)+"m":fmt(s/3600,1)+"h"}
+function avg(a){return a.reduce((x,y)=>x+y,0)/a.length}
+function theilSen(ys){
+  if(ys.length<5)return null;
+  const sl=[];
+  for(let i=0;i<ys.length;i++)for(let j=i+1;j<ys.length;j++)sl.push((ys[j]-ys[i])/(j-i));
+  sl.sort((a,b)=>a-b);
+  return sl[Math.floor(sl.length/2)];
+}
+
+function seriesChart(el,pts,o){
+  o=o||{};
+  if(pts.length<2){el.innerHTML="<p class='hint' style='padding:24px;text-align:center'>need at least 2 runs here</p>";return}
+  const W=o.w||620,H=o.h||190,pl=48,pr=14,ptop=14,pbot=24;
+  const ys=pts.map(p=>p.y);
+  let lo=Math.min(...ys),hi=Math.max(...ys);
+  const sp=(hi-lo)||Math.abs(hi)||1;
+  lo-=sp*0.15;hi+=sp*0.12;
+  if(o.floor0&&lo<0)lo=0;
+  const X=i=>pl+(i/(pts.length-1))*(W-pl-pr);
+  const Y=v=>ptop+(1-(v-lo)/(hi-lo))*(H-ptop-pbot);
+  let e=ys[0];const em=ys.map((v,i)=>e=i?0.35*v+0.65*e:v);
+  const lp=a=>a.map((v,i)=>(i?"L":"M")+fmt(X(i),1)+" "+fmt(Y(v),1)).join("");
+  const yl=o.yfmt||(v=>Math.round(v));
+  let g="";
+  for(let i=0;i<=4;i++){
+    const yv=lo+(hi-lo)*i/4,y=Y(yv);
+    g+="<line x1='"+pl+"' y1='"+fmt(y,1)+"' x2='"+(W-pr)+"' y2='"+fmt(y,1)+"' stroke='#26262f' stroke-width='1'/>";
+    g+="<text x='"+(pl-6)+"' y='"+fmt(y+3,1)+"' fill='#787887' font-size='10' text-anchor='end'>"+yl(yv)+"</text>";
+  }
+  const step=Math.max(1,Math.round((pts.length-1)/5));
+  for(let i=0;i<pts.length;i+=step)
+    g+="<text x='"+fmt(X(i),1)+"' y='"+(H-8)+"' fill='#787887' font-size='10' text-anchor='middle'>#"+(i+1)+"</text>";
+  const bi=o.markBest==="min"?ys.indexOf(Math.min(...ys)):ys.indexOf(Math.max(...ys));
+  let best="";
+  if(o.markBest)best="<circle cx='"+fmt(X(bi),1)+"' cy='"+fmt(Y(ys[bi]),1)+"' r='6' fill='none' stroke='#50dc78' stroke-width='1.5'/><text x='"+fmt(X(bi),1)+"' y='"+fmt(Y(ys[bi])-10,1)+"' fill='#50dc78' font-size='9' text-anchor='middle'>PB</text>";
+  const dots=pts.map((p,i)=>"<circle cx='"+fmt(X(i),1)+"' cy='"+fmt(Y(p.y),1)+"' r='3' fill='#2e93d6'/>").join("");
+  el.style.position="relative";
+  el.innerHTML="<svg width='"+W+"' height='"+H+"' viewBox='0 0 "+W+" "+H+"' style='max-width:100%'>"+g+
+    "<path d='"+lp(ys)+"' fill='none' stroke='#2e93d6' stroke-width='1.5' opacity='0.5'/>"+dots+
+    (pts.length>=6?"<path d='"+lp(em)+"' fill='none' stroke='#c58218' stroke-width='2'/>":"")+best+
+    "<line class='xh' y1='"+ptop+"' y2='"+(H-pbot)+"' stroke='#4a4a5a' stroke-width='1' visibility='hidden'/></svg>";
+  const svg=el.querySelector("svg"),xh=el.querySelector(".xh");
+  const tip=document.createElement("div");
+  tip.style.cssText="position:absolute;pointer-events:none;background:#0c0c14;border:1px solid #32323c;border-radius:5px;padding:5px 9px;font-size:11px;white-space:nowrap;display:none;z-index:5";
+  el.appendChild(tip);
+  svg.addEventListener("mousemove",ev=>{
+    const rc=svg.getBoundingClientRect();
+    const mx=(ev.clientX-rc.left)*(W/rc.width);
+    let b=0,bd=1e9;
+    pts.forEach((p,i)=>{const d=Math.abs(X(i)-mx);if(d<bd){bd=d;b=i}});
+    xh.setAttribute("x1",fmt(X(b),1));xh.setAttribute("x2",fmt(X(b),1));xh.setAttribute("visibility","visible");
+    tip.style.display="block";
+    tip.textContent="#"+(b+1)+" · "+pts[b].lab+" · "+(o.tipfmt?o.tipfmt(pts[b].y):yl(pts[b].y));
+    const er=el.getBoundingClientRect();
+    tip.style.left=Math.min(ev.clientX-er.left+14,er.width-130)+"px";
+    tip.style.top=(ev.clientY-er.top-30)+"px";
+  });
+  svg.addEventListener("mouseleave",()=>{tip.style.display="none";xh.setAttribute("visibility","hidden")});
+}
+
+function tile(l,v,u){return"<div class='tile'><div class='l'>"+l+"</div><div class='v'>"+v+"<span class='u'>"+(u||"")+"</span></div></div>"}
+
+function showProgress(mk){
+  const byMode={};
+  history.forEach(r=>{(byMode[r.mode]=byMode[r.mode]||[]).push(r)});
+  const keys=PRESETS.map(p=>p.key).filter(k=>byMode[k]);
+  const chips=$("pchips"),body=$("pbody");
+  if(!keys.length){
+    $("ptitle").textContent="—";chips.innerHTML="";
+    body.innerHTML="<p class='hint' style='text-align:center;padding:30px'>No runs yet — play a few and come back.</p>";
+    show($("progress"));return;
+  }
+  const sel=(mk&&byMode[mk])?mk:(byMode[preset.key]?preset.key:keys.reduce((a,b)=>byMode[a].length>=byMode[b].length?a:b));
+  const pr=PRESETS.find(p=>p.key===sel),runs=byMode[sel],isA=sel==="ADP";
+  $("ptitle").textContent=sel+" — "+pr.name.toUpperCase();
+  chips.innerHTML=keys.map(k=>"<button class='mchip"+(k===sel?" sel":"")+"' data-k='"+k+"'>"+k+" ("+byMode[k].length+")</button>").join("");
+  chips.querySelectorAll(".mchip").forEach(b=>b.addEventListener("click",()=>showProgress(b.dataset.k)));
+  const scores=runs.map(r=>r.score),n=runs.length;
+  const sf=v=>fmt(v,isA?1:0);
+  const pbV=Math.max(...scores),pbI=scores.indexOf(pbV);
+  const win=scores.slice(-20),sl=theilSen(win);
+  const trend=sl===null?"—":((sl/avg(win)*100>=0?"+":"")+fmt(sl/avg(win)*100,1));
+  let form="—";
+  if(n>=8){
+    const l5=avg(scores.slice(-5)),pv=avg(scores.slice(Math.max(0,n-20),n-5));
+    if(pv>0)form=((l5/pv-1>=0?"+":"")+Math.round((l5/pv-1)*100))+"%";
+  }
+  let html="<div class='grid'>"+
+    tile("RUNS",n,"")+
+    tile("BEST",sf(pbV)," · "+fmtDate(runs[pbI].ts))+
+    tile("TREND / RUN",trend,trend==="—"?"":"%")+
+    tile("LAST 5 VS PRIOR",form,"")+
+    tile("BALLS EATEN",runs.reduce((a,r)=>a+r.balls,0),"")+
+    tile("TIME PLAYED",fmtDur(runs.reduce((a,r)=>a+r.elapsed,0)),"")+
+    "</div>";
+  if(isA){
+    html+="<div class='grid' style='margin-top:10px'>"+
+      tile("BASE LATENCY",Math.round(adp.a),"ms")+
+      tile("FLICK COST",Math.round(adp.b),"ms/bit")+
+      tile("FADE",adp.ff.n>10?(Math.abs(adp.f)<1?"≈0":(adp.f>=0?"+":"")+fmt(adp.f,1)):"—",adp.ff.n>10?"ms/s":"")+
+      tile("REVERSAL",adp.rf.n>12?(Math.abs(adp.rho)<20?"≈0":(adp.rho>=0?"+":"")+Math.round(adp.rho)):"—",adp.rf.n>12?"ms":"")+
+      "</div>";
+  }
+  html+="<div class='chartcard'><div class='top'><div class='legend'>"+
+    "<span><i style='background:var(--chart-rt)'></i>"+(isA?"bits":"score")+" per run</span>"+
+    "<span><i style='background:var(--chart-avg)'></i>trend</span></div>"+
+    "<button class='tbtn' id='ptbl'>table</button></div>"+
+    "<div id='pchart1'></div><div id='ptable'></div></div>";
+  html+="<div class='chartcard'><div class='top'><div class='legend'>"+
+    "<span><i style='background:var(--chart-rt)'></i>avg reaction per run — lower is better</span>"+
+    "<span><i style='background:var(--chart-avg)'></i>trend</span></div></div>"+
+    "<div id='pchart2'></div></div>";
+  const adpRuns=isA?runs.filter(r=>r.fa!=null):[];
+  if(adpRuns.length>=2){
+    html+="<div class='half'>"+
+      "<div class='chartcard' style='margin-top:12px'><div class='top'><div class='legend'><span><i style='background:var(--chart-rt)'></i>base latency (ms)</span><span><i style='background:var(--chart-avg)'></i>trend</span></div></div><div id='pchart3'></div></div>"+
+      "<div class='chartcard' style='margin-top:12px'><div class='top'><div class='legend'><span><i style='background:var(--chart-rt)'></i>flick cost (ms/bit)</span><span><i style='background:var(--chart-avg)'></i>trend</span></div></div><div id='pchart4'></div></div></div>";
+  }
+  body.innerHTML=html;
+  const P=(arr,key)=>arr.map(r=>({y:r[key],lab:fmtDate(r.ts)}));
+  seriesChart($("pchart1"),P(runs,"score"),{markBest:"max",yfmt:v=>sf(v),tipfmt:v=>sf(v)+(isA?" bits":"")});
+  seriesChart($("pchart2"),P(runs.filter(r=>r.avgRt>0),"avgRt"),{markBest:"min",yfmt:v=>Math.round(v),tipfmt:v=>Math.round(v)+"ms"});
+  if(adpRuns.length>=2){
+    seriesChart($("pchart3"),P(adpRuns,"fa"),{w:300,h:150,markBest:"min",tipfmt:v=>Math.round(v)+"ms"});
+    seriesChart($("pchart4"),P(adpRuns,"fb"),{w:300,h:150,markBest:"min",tipfmt:v=>Math.round(v)+"ms/bit"});
+  }
+  $("ptbl").addEventListener("click",()=>{
+    const t=$("ptable"),c=$("pchart1");
+    const showT=t.style.display!=="block";
+    if(showT){
+      const rows=runs.slice().reverse().map((r,i)=>"<tr><td class='num'>"+(runs.length-i)+"</td><td>"+fmtDate(r.ts)+"</td><td class='num'>"+sf(r.score)+"</td><td class='num'>"+r.balls+"</td><td class='num'>"+Math.round(r.avgRt)+"ms</td><td class='num'>"+fmt(r.elapsed,1)+"s</td></tr>").join("");
+      t.innerHTML="<table><thead><tr><th class='num'>#</th><th>date</th><th class='num'>"+(isA?"bits":"score")+"</th><th class='num'>balls</th><th class='num'>avg rt</th><th class='num'>time</th></tr></thead><tbody>"+rows+"</tbody></table>";
+    }
+    t.style.display=showT?"block":"none";
+    c.style.display=showT?"none":"block";
+    $("ptbl").textContent=showT?"chart":"table";
+  });
+  show($("progress"));
 }
 
 function wireSensInputs(){
