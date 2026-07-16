@@ -220,13 +220,13 @@ let actx=null;
 let bits=0,servedID=0;
 const LS_ADP="bs_adp_model_v2";
 const ADP_DBANDS=[[0.18,0.40],[0.40,0.63],[0.63,1.05]];
-let adpPace=600,sessionEats=0,prevAng=null,lastCf=0.43;
+let adpPace=600,sessionEats=0,prevAng=null,lastCf=0.43,probeIn=20,lastProbe=false;
 function adpBase(){return Math.min(spawn.right-spawn.left,spawn.bottom-spawn.top)}
 function zfit(){return{n:0,sx:0,sxx:0,sy:0,sxy:0}}
-function freshAdp(){return{v:2,a:280,b:140,s2:0.04,f:0,rho:0,kap:0,ff:zfit(),rf:zfit(),kf:zfit(),cells:Array.from({length:24},()=>({r:0,n:0}))}}
+function freshAdp(){return{v:2,a:280,b:140,s2:0.04,f:0,rho:0,kap:0,ff:zfit(),rf:zfit(),kf:zfit(),pf:zfit(),cells:Array.from({length:24},()=>({r:0,n:0}))}}
 function loadAdp(){
   const m=loadJSON(LS_ADP);
-  if(m&&m.v===2)return m;
+  if(m&&m.v===2){if(!m.pf)m.pf=zfit();return m}
   const old=loadJSON("bs_adp_model_v1"),fresh=freshAdp();
   if(old){fresh.a=clamp(old.a||280,80,1400);fresh.b=clamp(old.b||140,20,400)}
   return fresh;
@@ -245,7 +245,7 @@ function ewSlope(F,minN){
   const den=F.n*F.sxx-F.sx*F.sx;
   return(F.n>minN&&Math.abs(den)>1e-6)?(F.n*F.sxy-F.sx*F.sy)/den:null;
 }
-function adpUpdate(id,mt,sector,band,t,rev,cf){
+function adpUpdate(id,mt,sector,band,t,rev,cf,pr){
   sessionEats++;
   const w=sessionEats<=5?0.5:1;
   adpPace=0.8*adpPace+0.2*mt;
@@ -260,8 +260,12 @@ function adpUpdate(id,mt,sector,band,t,rev,cf){
     adp.a=clamp((adpFit.n*af+k0*280)/(adpFit.n+k0),80,1400);
   }
   ewls(adp.ff,t,mt-base-adp.rho*rev-adp.kap*cfc,w,0.985);
-  const fs=ewSlope(adp.ff,10);
-  if(fs!==null)adp.f=clamp(fs,-5,20);
+  if(pr)ewls(adp.pf,t,mt-base-adp.rho*rev,w,0.995);
+  const fAll=ewSlope(adp.ff,10),fPr=ewSlope(adp.pf,5);
+  if(fPr!==null){
+    const wp=adp.pf.n/(adp.pf.n+10);
+    adp.f=clamp(wp*fPr+(1-wp)*(fAll!==null?fAll:0),-5,20);
+  }else if(fAll!==null)adp.f=clamp(fAll,-5,20);
   ewls(adp.rf,rev,mt-base-adp.f*t-adp.kap*cfc,w,0.985);
   const rs=ewSlope(adp.rf,12);
   if(rs!==null)adp.rho=clamp(rs,-150,400);
@@ -308,23 +312,27 @@ function adpPickBand(){
 }
 
 function adpSpawn(){
+  lastProbe=--probeIn<=0;
+  if(lastProbe)probeIn=16+Math.floor(Math.random()*9);
   const tEq=elapsed>0.2?preset.score/(preset.pressure*Math.log(1+elapsed)):1.2;
   const tTarget=Math.max(clamp(tEq,0.25,1.2)*1000,0.93*adpPace);
-  const idTarget=clamp((tTarget-adp.a-0.5*adp.f*Math.min(elapsed,90))/adp.b,1.0,6.5);
+  const idTarget=lastProbe?2.5:clamp((tTarget-adp.a-0.5*adp.f*Math.min(elapsed,90))/adp.b,1.0,6.5);
   const band=adpPickBand(),bd=ADP_DBANDS[band],base=adpBase();
   const dFeas=0.9*Math.max(
     dist(spawn.left,spawn.top,tx,ty),dist(spawn.right,spawn.top,tx,ty),
     dist(spawn.left,spawn.bottom,tx,ty),dist(spawn.right,spawn.bottom,tx,ty));
-  const D=clamp((bd[0]+Math.random()*(bd[1]-bd[0]))*base,70*zoom,dFeas);
+  const D=lastProbe
+    ?clamp((0.35+Math.random()*0.30)*base,70*zoom,dFeas)
+    :clamp((bd[0]+Math.random()*(bd[1]-bd[0]))*base,70*zoom,dFeas);
   const wEff=D/(Math.pow(2,idTarget)-1);
-  const cf=0.28+Math.random()*0.3;
+  const cf=lastProbe?0.43:0.28+Math.random()*0.3;
   lastCf=cf;
   cursorSize=clamp(wEff*cf,8*zoom,56*zoom);
   targetSize=clamp(wEff-cursorSize,10*zoom,90*zoom);
   const wAct=cursorSize+targetSize;
   const ts=targetSize;
   const lbx=spawn.left+ts,ubx=spawn.right-ts,lby=spawn.top+ts,uby=spawn.bottom-ts;
-  const sector=adpPickSector(),secA=sector*Math.PI/4;
+  const sector=lastProbe?Math.floor(Math.random()*8):adpPickSector(),secA=sector*Math.PI/4;
   for(let i=0;i<40;i++){
     const a=secA+(Math.random()-0.5)*Math.PI/4;
     const nx=tx+D*Math.cos(a),ny=ty+D*Math.sin(a);
@@ -382,12 +390,14 @@ function resetGame(){
   tx=vw/2;ty=vh/2;
   hp=maxHp;score=0;balls=0;elapsed=0;eatLog=[];
   bits=0;servedID=0;curTarget=null;prevAng=null;
+  probeIn=16+Math.floor(Math.random()*9);
   adpPace=Math.max(400,adp.a+adp.b*2.2);
   hideAll();
 }
 
 function spawnTarget(){
   const ox=tx,oy=ty;
+  lastProbe=false;
   if(isAdp())adpSpawn();
   else{
     const ts=targetSize;
@@ -407,7 +417,7 @@ function spawnTarget(){
     tx=clamp(cx+minC*Math.cos(a),spawn.left+targetSize,spawn.right-targetSize);
     ty=clamp(cy+minC*Math.sin(a),spawn.top+targetSize,spawn.bottom-targetSize);
   }
-  curTarget={id:servedID,fx:ox,fy:oy,d:dist(ox,oy,tx,ty),cf:lastCf};
+  curTarget={id:servedID,fx:ox,fy:oy,d:dist(ox,oy,tx,ty),cf:lastCf,pr:lastProbe};
 }
 
 function hit(){return dist(cx,cy,tx,ty)<(cursorSize+targetSize)/2}
@@ -426,7 +436,7 @@ function eat(now){
     if(rtMs>cheese&&rtMs<6000){
       const ang=Math.atan2(ty-curTarget.fy,tx-curTarget.fx);
       const rev=prevAng===null?0:(1-Math.cos(ang-prevAng))/2;
-      adpUpdate(curTarget.id,Math.min(rtMs,2500),adpSector(ang),adpBand(curTarget.d),elapsed,rev,curTarget.cf);
+      adpUpdate(curTarget.id,Math.min(rtMs,2500),adpSector(ang),adpBand(curTarget.d),elapsed,rev,curTarget.cf,curTarget.pr);
       prevAng=ang;
     }
   }
