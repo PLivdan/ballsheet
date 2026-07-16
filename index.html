@@ -218,43 +218,75 @@ let gameStartT=0,lastEatT=0,prevT=0,pauseT=0;
 let eatLog=[],lastResult=null;
 let actx=null;
 let bits=0,servedID=0;
-const LS_ADP="bs_adp_model_v1";
+const LS_ADP="bs_adp_model_v2";
 const ADP_DBANDS=[[0.18,0.40],[0.40,0.63],[0.63,1.05]];
-let adpPace=600;
+let adpPace=600,sessionEats=0,prevAng=null,lastCf=0.43;
 function adpBase(){return Math.min(spawn.right-spawn.left,spawn.bottom-spawn.top)}
-let adp=loadJSON(LS_ADP)||{a:280,b:140,s2:14400,cells:Array.from({length:24},()=>({r:0,n:0}))};
+function zfit(){return{n:0,sx:0,sxx:0,sy:0,sxy:0}}
+function freshAdp(){return{v:2,a:280,b:140,s2:0.04,f:0,rho:0,kap:0,ff:zfit(),rf:zfit(),kf:zfit(),cells:Array.from({length:24},()=>({r:0,n:0}))}}
+function loadAdp(){
+  const m=loadJSON(LS_ADP);
+  if(m&&m.v===2)return m;
+  const old=loadJSON("bs_adp_model_v1"),fresh=freshAdp();
+  if(old){fresh.a=clamp(old.a||280,80,1400);fresh.b=clamp(old.b||140,20,400)}
+  return fresh;
+}
+let adp=loadAdp();
 
 function isAdp(){return preset.key==="ADP"}
-function adpSigma(){return clamp(Math.sqrt(adp.s2),30,400)}
+function relSigma(){return clamp(Math.sqrt(adp.s2),0.05,0.8)}
 function adpCell(sector,band){return adp.cells[sector*3+band]}
 function adpBand(d){const b=adpBase();return d<0.40*b?0:d<0.63*b?1:2}
 function adpSector(angle){return((Math.round(angle/(Math.PI/4))%8)+8)%8}
 
 let adpFit={n:0,sx:0,sxx:0,sy:0,sxy:0};
-function adpUpdate(id,mt,sector,band){
+function ewls(F,x,y,w,L){F.n=F.n*L+w;F.sx=F.sx*L+w*x;F.sxx=F.sxx*L+w*x*x;F.sy=F.sy*L+w*y;F.sxy=F.sxy*L+w*x*y}
+function ewSlope(F,minN){
+  const den=F.n*F.sxx-F.sx*F.sx;
+  return(F.n>minN&&Math.abs(den)>1e-6)?(F.n*F.sxy-F.sx*F.sy)/den:null;
+}
+function adpUpdate(id,mt,sector,band,t,rev,cf){
+  sessionEats++;
+  const w=sessionEats<=5?0.5:1;
   adpPace=0.8*adpPace+0.2*mt;
-  const f=adpFit,L=0.97;
-  f.n=f.n*L+1;f.sx=f.sx*L+id;f.sxx=f.sxx*L+id*id;f.sy=f.sy*L+mt;f.sxy=f.sxy*L+id*mt;
-  const den=f.n*f.sxx-f.sx*f.sx;
-  if(f.n>6&&Math.abs(den)>1e-6){
-    const b=(f.n*f.sxy-f.sx*f.sy)/den;
-    adp.b=clamp(b,20,400);
-    adp.a=clamp((f.sy-adp.b*f.sx)/f.n,80,600);
+  const cfc=(cf||0.43)-0.43;
+  const base=adp.a+adp.b*id;
+  const pred=base+adp.f*t+adp.rho*rev+adp.kap*cfc;
+  ewls(adpFit,id,mt-adp.f*t-adp.rho*rev-adp.kap*cfc,w,0.97);
+  const bs=ewSlope(adpFit,6);
+  if(bs!==null){
+    const k0=3,bf=clamp(bs,20,400),af=clamp((adpFit.sy-bf*adpFit.sx)/adpFit.n,80,1400);
+    adp.b=clamp((adpFit.n*bf+k0*140)/(adpFit.n+k0),20,400);
+    adp.a=clamp((adpFit.n*af+k0*280)/(adpFit.n+k0),80,1400);
   }
-  const res=mt-(adp.a+adp.b*id);
-  adp.s2=clamp(0.9*adp.s2+0.1*res*res,900,160000);
+  ewls(adp.ff,t,mt-base-adp.rho*rev-adp.kap*cfc,w,0.985);
+  const fs=ewSlope(adp.ff,10);
+  if(fs!==null)adp.f=clamp(fs,-5,20);
+  ewls(adp.rf,rev,mt-base-adp.f*t-adp.kap*cfc,w,0.985);
+  const rs=ewSlope(adp.rf,12);
+  if(rs!==null)adp.rho=clamp(rs,-150,400);
+  ewls(adp.kf,cfc,mt-base-adp.f*t-adp.rho*rev,w,0.985);
+  const ks=ewSlope(adp.kf,15);
+  if(ks!==null)adp.kap=clamp(ks,-600,600);
+  const rr=(mt-pred)/Math.max(pred,120);
+  adp.s2=clamp(0.9*adp.s2+0.1*rr*rr,0.0025,0.64);
   const c=adpCell(sector,band);
-  c.r=c.n<1?res:0.8*c.r+0.2*res;
+  c.r=c.n<1?rr:0.8*c.r+0.2*rr;
   c.n++;
   saveJSON(LS_ADP,adp);
 }
 
+function cellSignal(i,b){
+  const c=adpCell(i,b);
+  return c.n>=3?c.r*(c.n/(c.n+6)):null;
+}
 function adpPickSector(){
-  const s=adpSigma(),w=[];
+  if(Math.random()<0.25)return Math.floor(Math.random()*8);
+  const S=relSigma(),w=[];
   for(let i=0;i<8;i++){
-    let pos=0,n=0;
-    for(let b=0;b<3;b++){const c=adpCell(i,b);if(c.n>=3){pos+=Math.max(0,c.r);n++}}
-    w.push(Math.exp(clamp(n?pos/n:0,0,2*s)/(0.7*s)));
+    let m=0,n=0;
+    for(let b=0;b<3;b++){const z=cellSignal(i,b);if(z!==null){m+=z;n++}}
+    w.push(1+2.5*clamp(n?m/(n*S):0,0,1));
   }
   const tot=w.reduce((a,b)=>a+b,0);
   let r=Math.random()*tot;
@@ -263,11 +295,11 @@ function adpPickSector(){
 }
 
 function adpPickBand(){
-  const s=adpSigma(),w=[];
+  const S=relSigma(),w=[];
   for(let b=0;b<3;b++){
-    let pos=0,n=0;
-    for(let i=0;i<8;i++){const c=adpCell(i,b);if(c.n>=3){pos+=Math.max(0,c.r);n++}}
-    w.push(1+2*clamp(n?pos/(n*s):0,0,1));
+    let m=0,n=0;
+    for(let i=0;i<8;i++){const z=cellSignal(i,b);if(z!==null){m+=z;n++}}
+    w.push(1+2*clamp(n?m/(n*S):0,0,1));
   }
   const tot=w[0]+w[1]+w[2];
   let r=Math.random()*tot;
@@ -278,7 +310,7 @@ function adpPickBand(){
 function adpSpawn(){
   const tEq=elapsed>0.2?preset.score/(preset.pressure*Math.log(1+elapsed)):1.2;
   const tTarget=Math.max(clamp(tEq,0.25,1.2)*1000,0.93*adpPace);
-  const idTarget=clamp((tTarget-adp.a)/adp.b,1.0,6.5);
+  const idTarget=clamp((tTarget-adp.a-0.5*adp.f*Math.min(elapsed,90))/adp.b,1.0,6.5);
   const band=adpPickBand(),bd=ADP_DBANDS[band],base=adpBase();
   const dFeas=0.9*Math.max(
     dist(spawn.left,spawn.top,tx,ty),dist(spawn.right,spawn.top,tx,ty),
@@ -286,6 +318,7 @@ function adpSpawn(){
   const D=clamp((bd[0]+Math.random()*(bd[1]-bd[0]))*base,70*zoom,dFeas);
   const wEff=D/(Math.pow(2,idTarget)-1);
   const cf=0.28+Math.random()*0.3;
+  lastCf=cf;
   cursorSize=clamp(wEff*cf,8*zoom,56*zoom);
   targetSize=clamp(wEff-cursorSize,10*zoom,90*zoom);
   const wAct=cursorSize+targetSize;
@@ -348,7 +381,7 @@ function resetGame(){
   cx=vw/2-200*zoom;cy=vh/2-200*zoom;
   tx=vw/2;ty=vh/2;
   hp=maxHp;score=0;balls=0;elapsed=0;eatLog=[];
-  bits=0;servedID=0;curTarget=null;
+  bits=0;servedID=0;curTarget=null;prevAng=null;
   adpPace=Math.max(400,adp.a+adp.b*2.2);
   hideAll();
 }
@@ -374,7 +407,7 @@ function spawnTarget(){
     tx=clamp(cx+minC*Math.cos(a),spawn.left+targetSize,spawn.right-targetSize);
     ty=clamp(cy+minC*Math.sin(a),spawn.top+targetSize,spawn.bottom-targetSize);
   }
-  curTarget={id:servedID,fx:ox,fy:oy,d:dist(ox,oy,tx,ty)};
+  curTarget={id:servedID,fx:ox,fy:oy,d:dist(ox,oy,tx,ty),cf:lastCf};
 }
 
 function hit(){return dist(cx,cy,tx,ty)<(cursorSize+targetSize)/2}
@@ -390,9 +423,11 @@ function eat(now){
   eatLog.push([elapsed,rtMs]);
   if(isAdp()&&curTarget&&curTarget.id>0){
     bits+=curTarget.id;
-    if(rtMs>cheese&&rtMs<2500){
+    if(rtMs>cheese&&rtMs<6000){
       const ang=Math.atan2(ty-curTarget.fy,tx-curTarget.fx);
-      adpUpdate(curTarget.id,rtMs,adpSector(ang),adpBand(curTarget.d));
+      const rev=prevAng===null?0:(1-Math.cos(ang-prevAng))/2;
+      adpUpdate(curTarget.id,Math.min(rtMs,2500),adpSector(ang),adpBand(curTarget.d),elapsed,rev,curTarget.cf);
+      prevAng=ang;
     }
   }
   lastEatT=now;
@@ -424,7 +459,9 @@ function buildResult(){
   const rts=eatLog.filter(e=>e[1]>0).map(e=>e[1]);
   const avgRt=rts.length?rts.reduce((a,b)=>a+b,0)/rts.length:0;
   const adpX=isAdp()?{tpt:elapsed>0?Math.round(bits/elapsed*100)/100:0,
-    fa:Math.round(adp.a),fb:Math.round(adp.b)}:{};
+    fa:Math.round(adp.a),fb:Math.round(adp.b),
+    fade:adp.ff.n>10?Math.round(adp.f*10)/10:null,
+    rev:adp.rf.n>12?Math.round(adp.rho):null}:{};
   return{
     ts:new Date().toISOString(),mode:preset.key,
     score:isAdp()?Math.round(bits*10)/10:Math.round(score*100)/100,
@@ -709,6 +746,8 @@ function showResults(r,prevBest){
   const tiles=a?[
     ["THROUGHPUT",fmt(r.tpt,2),"bits/s"],["BALLS",r.balls,""],["TIME",fmt(r.elapsed,1),"s"],
     ["AVG REACTION",fmt(r.avgRt,0),"ms"],["BASE LATENCY",r.fa,"ms"],["FLICK COST",r.fb,"ms/bit"],
+    ["FADE",r.fade==null?"—":Math.abs(r.fade)<1?"≈0":(r.fade>=0?"+":"")+r.fade,r.fade==null?"":"ms/s"],
+    ["REVERSAL COST",r.rev==null?"—":Math.abs(r.rev)<20?"≈0":(r.rev>=0?"+":"")+r.rev,r.rev==null?"":"ms"],
   ]:[
     ["BALLS",r.balls,""],["TIME",fmt(r.elapsed,1),"s"],["AVG REACTION",fmt(r.avgRt,0),"ms"],
     ["BALLS / SEC",fmt(r.ballsS,2),""],["SCORE / SEC",fmt(r.avgEat,1),""],["PEAK 5s RATE",fmt(r.maxEat,1),"/s"],
@@ -734,7 +773,7 @@ function arcPath(cx0,cy0,r0,r1,a0,a1){
 }
 
 function renderHeatmap(){
-  const s=adpSigma(),C=130,R=[36,64,90,116];
+  const s=relSigma(),C=130,R=[36,64,90,116];
   const ARROWS=["→","↘","↓","↙","←","↖","↑","↗"];
   const BANDNAMES=["short","mid","long"];
   let cells="";
@@ -747,7 +786,7 @@ function renderHeatmap(){
       if(c.n>=3){
         const t=clamp(c.r/(1.2*s),-1,1);
         fill=t>=0?lerpCol("#2a2a35","#c58218",t):lerpCol("#2a2a35","#2489cc",-t);
-        tt=ARROWS[i]+" "+BANDNAMES[b]+" flicks · "+Math.round(Math.abs(c.r))+"ms "+(c.r>=0?"slower":"faster")+" than expected for you ("+c.n+" balls)";
+        tt=ARROWS[i]+" "+BANDNAMES[b]+" flicks · "+Math.round(Math.abs(c.r)*100)+"% "+(c.r>=0?"slower":"faster")+" than expected for you ("+c.n+" balls)";
         scored.push({i,b,r:c.r});
       }
       cells+="<path d='"+arcPath(C,C,R[b],R[b+1],a0,a1)+"' fill='"+fill+"' stroke='#16161f' stroke-width='2'><title>"+tt+"</title></path>";
@@ -761,8 +800,8 @@ function renderHeatmap(){
   const weak=scored.filter(c=>c.r>0.25*s).slice(0,2);
   const strong=scored.filter(c=>c.r<-0.25*s);
   let out="";
-  if(weak.length)out+="<span style='color:#c58218'>focus on: "+weak.map(c=>name(c)+" flicks (+"+Math.round(c.r)+"ms)").join(" · ")+"</span>";
-  if(strong.length)out+=(out?"<br>":"")+"<span style='color:#2489cc'>strongest: "+name(strong[strong.length-1])+" flicks ("+Math.round(strong[strong.length-1].r)+"ms)</span>";
+  if(weak.length)out+="<span style='color:#c58218'>focus on: "+weak.map(c=>name(c)+" flicks (+"+Math.round(c.r*100)+"%)").join(" · ")+"</span>";
+  if(strong.length)out+=(out?"<br>":"")+"<span style='color:#2489cc'>strongest: "+name(strong[strong.length-1])+" flicks ("+Math.round(strong[strong.length-1].r*100)+"%)</span>";
   if(!out)out="<span style='color:#787887'>no clear weak spots yet — keep playing and this fills in</span>";
   $("heatsummary").innerHTML=out;
 }
