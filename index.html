@@ -285,6 +285,8 @@ function adpSpawn(){
     dist(spawn.left,spawn.bottom,tx,ty),dist(spawn.right,spawn.bottom,tx,ty));
   const D=clamp((bd[0]+Math.random()*(bd[1]-bd[0]))*base,70*zoom,dFeas);
   const wEff=D/(Math.pow(2,idTarget)-1);
+  const cf=0.28+Math.random()*0.3;
+  cursorSize=clamp(wEff*cf,8*zoom,56*zoom);
   targetSize=clamp(wEff-cursorSize,10*zoom,90*zoom);
   const wAct=cursorSize+targetSize;
   const ts=targetSize;
@@ -293,17 +295,17 @@ function adpSpawn(){
   for(let i=0;i<40;i++){
     const a=secA+(Math.random()-0.5)*Math.PI/4;
     const nx=tx+D*Math.cos(a),ny=ty+D*Math.sin(a);
-    if(nx>=lbx&&nx<=ubx&&ny>=lby&&ny<=uby){servedID=Math.log2(D/wAct+1);tx=nx;ty=ny;return}
+    if(nx>=lbx&&nx<=ubx&&ny>=lby&&ny<=uby&&clearOfCursor(nx,ny)){servedID=Math.log2(D/wAct+1);tx=nx;ty=ny;return}
   }
   for(let i=0;i<80;i++){
     const a=Math.random()*2*Math.PI;
     const nx=tx+D*Math.cos(a),ny=ty+D*Math.sin(a);
-    if(nx>=lbx&&nx<=ubx&&ny>=lby&&ny<=uby){servedID=Math.log2(D/wAct+1);tx=nx;ty=ny;return}
+    if(nx>=lbx&&nx<=ubx&&ny>=lby&&ny<=uby&&clearOfCursor(nx,ny)){servedID=Math.log2(D/wAct+1);tx=nx;ty=ny;return}
   }
   for(let i=0;i<200;i++){
     const nx=lbx+Math.random()*(ubx-lbx),ny=lby+Math.random()*(uby-lby);
     const d=dist(nx,ny,tx,ty);
-    if(d>70*zoom){servedID=Math.log2(d/wAct+1);tx=nx;ty=ny;return}
+    if(d>70*zoom&&clearOfCursor(nx,ny)){servedID=Math.log2(d/wAct+1);tx=nx;ty=ny;return}
   }
   tx=lbx+Math.random()*(ubx-lbx);ty=lby+Math.random()*(uby-lby);
   servedID=Math.log2(Math.max(dist(cx,cy,tx,ty),1)/wAct+1);
@@ -362,14 +364,21 @@ function spawnTarget(){
     for(let i=0;i<500;i++){
       const nx=lbx+Math.random()*(ubx-lbx),ny=lby+Math.random()*(uby-lby);
       const d=dist(nx,ny,tx,ty);
-      if(d>minD&&d<maxD){tx=nx;ty=ny;placed=true;break}
+      if(d>minD&&d<maxD&&clearOfCursor(nx,ny)){tx=nx;ty=ny;placed=true;break}
     }
     if(!placed){tx=lbx+Math.random()*(ubx-lbx);ty=lby+Math.random()*(uby-lby)}
+  }
+  if(!clearOfCursor(tx,ty)){
+    const minC=(cursorSize+targetSize)/2+12*zoom;
+    const a=dist(tx,ty,cx,cy)>0.5?Math.atan2(ty-cy,tx-cx):Math.random()*2*Math.PI;
+    tx=clamp(cx+minC*Math.cos(a),spawn.left+targetSize,spawn.right-targetSize);
+    ty=clamp(cy+minC*Math.sin(a),spawn.top+targetSize,spawn.bottom-targetSize);
   }
   curTarget={id:servedID,fx:ox,fy:oy,d:dist(ox,oy,tx,ty)};
 }
 
 function hit(){return dist(cx,cy,tx,ty)<(cursorSize+targetSize)/2}
+function clearOfCursor(nx,ny){return dist(nx,ny,cx,cy)>(cursorSize+targetSize)/2+12*zoom}
 
 function eat(now){
   const reaction=(now-lastEatT)/1000,rtMs=reaction*1000;
