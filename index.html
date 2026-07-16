@@ -117,6 +117,15 @@ td.num,th.num{text-align:right}
           <input id="gsens" type="number" min="0.01" max="100" step="0.01" placeholder="sens">
         </div>
         <p class="hint">type your in-game sensitivity — cm/360 fills in automatically</p>
+        <div class="divider">feel</div>
+        <div class="row"><label for="feel">Cursor feel</label>
+          <select id="feel">
+            <option value="game">match my game (FOV)</option>
+            <option value="classic">classic — 360° = screen</option>
+          </select>
+        </div>
+        <div class="row" id="fovrow"><label for="fov">Game FOV (horizontal °)</label><input id="fov" type="number" min="60" max="140" step="1"></div>
+        <p class="hint" id="feelhint">FOV mode: flicks need the same hand movement as in your game, on any screen</p>
         <div class="readout" id="readout"></div>
         <div id="rawchip"></div>
         <div class="row" style="margin-top:14px"><label for="sound">Sounds</label><input id="sound" type="checkbox" checked style="width:auto"></div>
@@ -214,11 +223,11 @@ const PRESETS=[
   {key:"ADP",name:"Adaptive",cursor:30,target:40,score:30,pressure:55,hp:120,cheese:100,desc:"learns you — flow difficulty, targets your weak angles"},
 ];
 const GAMES=[
-  {id:"mr",name:"Marvel Rivals",yaw:0.0175},
-  {id:"cs2",name:"CS2 / CS:GO",yaw:0.022},
-  {id:"apex",name:"Apex Legends",yaw:0.022},
-  {id:"val",name:"Valorant",yaw:0.07},
-  {id:"ow2",name:"Overwatch 2",yaw:0.0066},
+  {id:"mr",name:"Marvel Rivals",yaw:0.0175,fov:103},
+  {id:"cs2",name:"CS2 / CS:GO",yaw:0.022,fov:106},
+  {id:"apex",name:"Apex Legends",yaw:0.022,fov:110},
+  {id:"val",name:"Valorant",yaw:0.07,fov:103},
+  {id:"ow2",name:"Overwatch 2",yaw:0.0066,fov:103},
 ];
 const PREGAME=0,INGAME=1,POSTGAME=2;
 const LS_SET="bs_settings_v1",LS_HIST="bs_history_v1";
@@ -226,7 +235,8 @@ const LS_SET="bs_settings_v1",LS_HIST="bs_history_v1";
 const canvas=document.getElementById("game"),ctx=canvas.getContext("2d");
 const $=id=>document.getElementById(id);
 
-let settings=Object.assign({dpi:800,cm360:30,mode:1,game:"mr",sound:true,hpbar:true},loadJSON(LS_SET)||{});
+const _st=loadJSON(LS_SET);
+let settings=Object.assign({dpi:800,cm360:30,mode:1,game:"mr",sound:true,hpbar:true,fov:103,feel:_st?"classic":"game"},_st||{});
 let history=loadJSON(LS_HIST)||[];
 
 let vw=0,vh=0,zoom=1,sens=0.1,rawInput=null,locked=false,paused=false;
@@ -393,7 +403,9 @@ function layout(){
   outer={x:mx-q/2,y:my-q/2,w:q,h:q};
   inner={x:mx-inn/2,y:my-inn/2,w:inn,h:inn};
   spawn={left:inner.x,right:inner.x+inner.w,top:inner.y+30*zoom,bottom:inner.y+inner.h-60*zoom};
-  sens=zoom*(screen.width||vw)/countsPer360();
+  sens=settings.feel==="classic"
+    ?zoom*(screen.width||vw)/countsPer360()
+    :zoom*2560*360/(clamp(settings.fov||103,60,140)*countsPer360());
   applyPreset(preset);
 }
 function applyPreset(p){
@@ -719,10 +731,11 @@ function updateReadout(){
   const g=GAMES.find(x=>x.id===settings.game)||GAMES[0];
   const inches=settings.cm360/2.54;
   const eq=gameSensFromCm360(g.yaw);
+  const cmField=(800*zoom/sens)/(settings.dpi/2.54);
   $("readout").innerHTML=
     "<b>"+fmt(settings.cm360,1)+" cm/360</b> · "+fmt(inches,1)+" in/360<br>"+
     "<span class='eq'>≈ "+fmt(eq,2)+" sens in "+g.name+" @ "+settings.dpi+" DPI · "+
-    Math.round(countsPer360())+" counts per turn</span>";
+    "field ≈ "+fmt(cmField,1)+" cm of mousepad across</span>";
 }
 
 function updateRawChip(){
@@ -1132,7 +1145,21 @@ function wireSensInputs(){
   $("cm360").addEventListener("input",syncFromCm);
   $("dpi").addEventListener("input",syncFromCm);
   $("gsens").addEventListener("input",syncFromGame);
-  gs.addEventListener("change",()=>{settings.game=gs.value;saveJSON(LS_SET,settings);syncFromCm()});
+  gs.addEventListener("change",()=>{
+    settings.game=gs.value;
+    const g=GAMES.find(x=>x.id===gs.value);
+    if(g&&g.fov){settings.fov=g.fov;$("fov").value=g.fov}
+    saveJSON(LS_SET,settings);syncFromCm();
+  });
+  $("feel").value=settings.feel;
+  $("fov").value=settings.fov;
+  const feelUI=()=>{$("fovrow").style.display=settings.feel==="game"?"flex":"none";
+    $("feelhint").textContent=settings.feel==="game"
+      ?"FOV mode: flicks need the same hand movement as in your game, on any screen"
+      :"classic: one full 360° of mouse travel sweeps your screen width (original BallSheet feel)"};
+  $("feel").addEventListener("change",()=>{settings.feel=$("feel").value;feelUI();saveJSON(LS_SET,settings);layout();updateReadout()});
+  $("fov").addEventListener("input",()=>{settings.fov=clamp(+$("fov").value||103,60,140);saveJSON(LS_SET,settings);layout();updateReadout()});
+  feelUI();
   syncFromCm();
 }
 

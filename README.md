@@ -10,14 +10,16 @@ Overlap your cursor ball with the target ball to eat it. Every eat scores points
 
 Most browser aim games use your OS pointer, so your mousepad-to-screen mapping depends on Windows settings, pointer acceleration, and window size. Aim training only transfers to your game if the *physical distance your hand moves* maps identically.
 
-BallSheet uses the Pointer Lock API with `unadjustedMovement` (raw input — no OS acceleration, no pointer scaling) and maps it the way aim trainers do:
+BallSheet uses the Pointer Lock API with `unadjustedMovement` (raw input — no OS acceleration, no pointer scaling) and maps counts to the cursor in one of two selectable ways:
+
+- **Match my game (FOV)** — the default. The play field is treated as a slice of your in-game view: `px per count = fieldWidth × 360 ÷ (fieldFOV × counts/360)`, with the field calibrated to the fraction of a 103°-hFOV screen it would occupy. A flick across a ball takes exactly the hand movement it would take in your game near the crosshair — and because sensitivity is anchored to the field rather than the screen, the feel is identical on every monitor, window size, and Windows scaling factor. Set the FOV field to your game's horizontal FOV.
+- **Classic — 360° = screen** — the original BallSheet mapping: one full turn of mouse travel sweeps your screen width. Roughly 3.5× more hand travel than in-game feel at typical FOVs, and device-dependent (the fixed-size field is a larger share of smaller screens). Kept for continuity with the desktop original.
 
 ```
 counts per 360° = DPI × cm/360 ÷ 2.54
-cursor px per count = screen width ÷ counts per 360°
 ```
 
-One full 360° worth of mouse travel sweeps the full width of your screen. Enter your DPI and cm/360 — or just pick your game and type your in-game sens, and the converter fills in cm/360 using the game's yaw value:
+Enter your DPI and cm/360 — or just pick your game and type your in-game sens, and the converter fills in cm/360 using the game's yaw value:
 
 | Game | Yaw (°/count) |
 |---|---|
