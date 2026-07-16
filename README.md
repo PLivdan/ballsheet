@@ -41,6 +41,16 @@ Yaw values follow [KovaaK's custom sensitivity scales](https://wiki.kovaaks.com/
 | 4 | SBB — Shorter Big Ball | 30/60 | 75 | shorter clock |
 | 5 | BC — Ball Cheese | 69/69 | 100 | 69 everything |
 | 6 | SSB — Small Balls | 5/5 | 100 | pixel-perfect |
+| 7 | ADP — Adaptive | 30/varies | 120 | flow-matched difficulty, see below |
+
+## Adaptive mode
+
+Every spawn is a decision solved online — no calibration phase, no fixed difficulty.
+
+- **Model**: a live Fitts' law fit `MT = a + b·ID` (with `ID = log₂(D/W + 1)`) updated after every eat with exponential forgetting, persisted across sessions. `a` is your base visuomotor latency, `b` your cost per bit of difficulty.
+- **Controller**: each target is placed at the index of difficulty you can hit at ~78% of the pace that keeps your HP stable: `ID* = (T_budget − a − 0.77σ) / b`, where `T_budget = score_per_ball / (pressure · ln(1+t))` is the eat interval that offsets the drain. Runs arc naturally from slow precise targets early to fast close targets late; you die exactly when the required pace exceeds your measured frontier.
+- **Weakness targeting**: reaction-time residuals against your own model are tracked per movement direction (8 sectors) × flick distance (3 bands). Spawns are softmax-weighted toward the cells where you underperform, so the game quietly feeds you your weak angles. The postgame heatmap shows them.
+- **Scoring**: total information transmitted in **bits** (Σ ID), and throughput in bits/s — difficulty-invariant, so the number is a genuine skill measure comparable across sessions, unlike raw score which mostly reflects target size.
 
 Scoring: each eat is worth `score_per_ball × min(reaction, cheese) ÷ cheese`, so instant "cheese" eats (target spawning on your cursor) are worth less. HP drain is `pressure × ln(1 + elapsed)` per second — survival gets exponentially harder.
 
@@ -49,7 +59,7 @@ Scoring: each eat is worth `score_per_ball × min(reaction, cheese) ÷ cheese`, 
 - Chrome or Edge recommended — they support raw input (`unadjustedMovement`). Other browsers fall back to OS-adjusted movement and show a warning.
 - For exact parity with fullscreen native trainers, run your display at 100% scaling.
 - Run history and settings are stored in `localStorage`. Nothing leaves your machine.
-- Keys: `R` restart · `E`/`M` menu · `1–6` modes · `F` fullscreen · `Esc` release mouse.
+- Keys: `R` restart · `E`/`M` menu · `1–7` modes · `F` fullscreen · `Esc` release mouse.
 
 ## Credits
 
@@ -57,6 +67,6 @@ A web reimplementation of **BallSheetOGL** by [helloimxtal](https://github.com/h
 
 ## Roadmap
 
-- Adaptive mode: Fitts'-law-based skill model (speed, throughput, consistency, precision, endurance, flick, direction) driving per-weakness training stimuli
-- Session analytics: RT distributions, fatigue curves, spatial heatmaps, movement rose
+- Session analytics: RT distributions, fatigue curves, throughput trend across sessions
+- Thompson-sampling layer over stimulus regions targeting learning rate rather than weakness level
 - Import history from the desktop Python version

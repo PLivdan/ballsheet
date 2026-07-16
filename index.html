@@ -111,10 +111,11 @@ td.num,th.num{text-align:right}
         <h2>Game mode</h2>
         <div id="modes"></div>
         <div class="row" style="margin-top:14px"><label for="sound">Sounds</label><input id="sound" type="checkbox" checked style="width:auto"></div>
+        <div class="row"><label for="hpbar">HP bar</label><input id="hpbar" type="checkbox" checked style="width:auto"></div>
       </div>
     </div>
     <div class="playrow"><button id="play">▶ &nbsp;PLAY</button></div>
-    <p class="keys"><kbd>R</kbd> restart · <kbd>E</kbd> menu · <kbd>1</kbd>–<kbd>6</kbd> modes · <kbd>F</kbd> fullscreen · <kbd>Esc</kbd> release mouse</p>
+    <p class="keys"><kbd>R</kbd> restart · <kbd>E</kbd> menu · <kbd>1</kbd>–<kbd>7</kbd> modes · <kbd>F</kbd> fullscreen · <kbd>Esc</kbd> release mouse</p>
     <div class="card" id="histcard">
       <h2>Recent runs</h2>
       <div id="histbody"><p class="hint">No runs yet — your history is saved in this browser.</p></div>
@@ -141,6 +142,17 @@ td.num,th.num{text-align:right}
       <div id="chart"></div>
       <div id="rtable"></div>
       <div id="tooltip"></div>
+    </div>
+    <div class="chartcard" id="heatcard" hidden style="margin-top:12px;text-align:center">
+      <div class="top">
+        <div class="legend">
+          <span><i style="background:#2489cc"></i>faster than your model</span>
+          <span><i style="background:#2a2a35"></i>on model</span>
+          <span><i style="background:#c58218"></i>slower — trained more</span>
+        </div>
+      </div>
+      <div id="heatmap"></div>
+      <p class="hint" style="margin-top:6px">movement-direction residuals · rings = flick distance (near / mid / far) · hover cells for detail</p>
     </div>
     <div class="btnrow">
       <button class="pri" id="again">play again <kbd style="border-color:#7d9bff">R</kbd></button>
@@ -172,6 +184,7 @@ const PRESETS=[
   {key:"SBB",name:"Shorter Big Ball",cursor:30,target:60,score:26.28,pressure:60,hp:75,cheese:100,desc:"BB on a shorter clock"},
   {key:"BC",name:"Ball Cheese",cursor:69,target:69,score:69,pressure:169,hp:100,cheese:69,desc:"69 everything — high pressure meme"},
   {key:"SSB",name:"Small Balls",cursor:5,target:5,score:40,pressure:40,hp:100,cheese:2,desc:"microscopic — pixel-perfect control"},
+  {key:"ADP",name:"Adaptive",cursor:30,target:40,score:30,pressure:55,hp:120,cheese:100,desc:"learns you — flow difficulty, targets your weak angles"},
 ];
 const GAMES=[
   {id:"mr",name:"Marvel Rivals",yaw:0.0175},
@@ -186,7 +199,7 @@ const LS_SET="bs_settings_v1",LS_HIST="bs_history_v1";
 const canvas=document.getElementById("game"),ctx=canvas.getContext("2d");
 const $=id=>document.getElementById(id);
 
-let settings=Object.assign({dpi:800,cm360:30,mode:1,game:"mr",sound:true},loadJSON(LS_SET)||{});
+let settings=Object.assign({dpi:800,cm360:30,mode:1,game:"mr",sound:true,hpbar:true},loadJSON(LS_SET)||{});
 let history=loadJSON(LS_HIST)||[];
 
 let vw=0,vh=0,zoom=1,sens=0.1,rawInput=null,locked=false,paused=false;
@@ -197,6 +210,78 @@ let cx=0,cy=0,tx=0,ty=0,hp=100,score=0,balls=0,elapsed=0;
 let gameStartT=0,lastEatT=0,prevT=0,pauseT=0;
 let eatLog=[],lastResult=null;
 let actx=null;
+let bits=0,servedID=0;
+const LS_ADP="bs_adp_model_v1";
+const ADP_SIZES=[18,26,36,48],ADP_BANDS=[140,260];
+let adp=loadJSON(LS_ADP)||{a:280,b:140,s2:14400,cells:Array.from({length:24},()=>({r:0,n:0}))};
+
+function isAdp(){return preset.key==="ADP"}
+function adpSigma(){return clamp(Math.sqrt(adp.s2),30,400)}
+function adpCell(sector,band){return adp.cells[sector*3+band]}
+function adpBand(d){return d<ADP_BANDS[0]*zoom?0:d<ADP_BANDS[1]*zoom?1:2}
+function adpSector(angle){return((Math.round(angle/(Math.PI/4))%8)+8)%8}
+
+let adpFit={n:0,sx:0,sxx:0,sy:0,sxy:0};
+function adpUpdate(id,mt,sector,band){
+  const f=adpFit,L=0.97;
+  f.n=f.n*L+1;f.sx=f.sx*L+id;f.sxx=f.sxx*L+id*id;f.sy=f.sy*L+mt;f.sxy=f.sxy*L+id*mt;
+  const den=f.n*f.sxx-f.sx*f.sx;
+  if(f.n>6&&Math.abs(den)>1e-6){
+    const b=(f.n*f.sxy-f.sx*f.sy)/den;
+    adp.b=clamp(b,20,400);
+    adp.a=clamp((f.sy-adp.b*f.sx)/f.n,80,600);
+  }
+  const res=mt-(adp.a+adp.b*id);
+  adp.s2=clamp(0.9*adp.s2+0.1*res*res,900,160000);
+  const c=adpCell(sector,band);
+  c.r=c.n<1?res:0.8*c.r+0.2*res;
+  c.n++;
+  saveJSON(LS_ADP,adp);
+}
+
+function adpPickSector(){
+  const s=adpSigma(),w=[];
+  for(let i=0;i<8;i++){
+    let pos=0,n=0;
+    for(let b=0;b<3;b++){const c=adpCell(i,b);if(c.n>=3){pos+=Math.max(0,c.r);n++}}
+    w.push(Math.exp(clamp(n?pos/n:0,0,2*s)/(0.7*s)));
+  }
+  const tot=w.reduce((a,b)=>a+b,0);
+  let r=Math.random()*tot;
+  for(let i=0;i<8;i++){r-=w[i];if(r<=0)return i}
+  return 7;
+}
+
+function adpSpawn(){
+  const tEq=elapsed>0.2?preset.score/(preset.pressure*Math.log(1+elapsed)):1.2;
+  const tBudget=clamp(tEq,0.25,1.2)*1000;
+  const idStar=clamp((tBudget-adp.a-0.772*adpSigma())/adp.b,1.0,6.5);
+  const wt=ADP_SIZES[Math.floor(Math.random()*ADP_SIZES.length)]*zoom;
+  targetSize=wt;
+  const wEff=cursorSize+wt;
+  const maxD=Math.min(spawn.right-spawn.left,spawn.bottom-spawn.top)*0.85;
+  const D=clamp(wEff*(Math.pow(2,idStar)-1),70*zoom,maxD);
+  const ts=targetSize;
+  const lbx=spawn.left+ts,ubx=spawn.right-ts,lby=spawn.top+ts,uby=spawn.bottom-ts;
+  const sector=adpPickSector(),secA=sector*Math.PI/4;
+  for(let i=0;i<40;i++){
+    const a=secA+(Math.random()-0.5)*Math.PI/4;
+    const nx=tx+D*Math.cos(a),ny=ty+D*Math.sin(a);
+    if(nx>=lbx&&nx<=ubx&&ny>=lby&&ny<=uby){servedID=Math.log2(D/wEff+1);tx=nx;ty=ny;return}
+  }
+  for(let i=0;i<80;i++){
+    const a=Math.random()*2*Math.PI;
+    const nx=tx+D*Math.cos(a),ny=ty+D*Math.sin(a);
+    if(nx>=lbx&&nx<=ubx&&ny>=lby&&ny<=uby){servedID=Math.log2(D/wEff+1);tx=nx;ty=ny;return}
+  }
+  for(let i=0;i<200;i++){
+    const nx=lbx+Math.random()*(ubx-lbx),ny=lby+Math.random()*(uby-lby);
+    const d=dist(nx,ny,tx,ty);
+    if(d>70*zoom){servedID=Math.log2(d/wEff+1);tx=nx;ty=ny;return}
+  }
+  tx=lbx+Math.random()*(ubx-lbx);ty=lby+Math.random()*(uby-lby);
+  servedID=Math.log2(Math.max(dist(cx,cy,tx,ty),1)/wEff+1);
+}
 
 function loadJSON(k){try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}}
 function saveJSON(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
@@ -228,25 +313,33 @@ function applyPreset(p){
   scorePerBall=p.score;pressure=p.pressure;cheese=p.cheese;maxHp=p.hp;
 }
 
+let curTarget=null;
 function resetGame(){
   applyPreset(preset);
   state=PREGAME;paused=false;
   cx=vw/2-200*zoom;cy=vh/2-200*zoom;
   tx=vw/2;ty=vh/2;
   hp=maxHp;score=0;balls=0;elapsed=0;eatLog=[];
+  bits=0;servedID=0;curTarget=null;
   hideAll();
 }
 
 function spawnTarget(){
-  const ts=targetSize;
-  const lbx=spawn.left+ts,ubx=spawn.right-ts,lby=spawn.top+ts,uby=spawn.bottom-ts;
-  const minD=100*zoom,maxD=300*zoom;
-  for(let i=0;i<500;i++){
-    const nx=lbx+Math.random()*(ubx-lbx),ny=lby+Math.random()*(uby-lby);
-    const d=dist(nx,ny,tx,ty);
-    if(d>minD&&d<maxD){tx=nx;ty=ny;return}
+  const ox=tx,oy=ty;
+  if(isAdp())adpSpawn();
+  else{
+    const ts=targetSize;
+    const lbx=spawn.left+ts,ubx=spawn.right-ts,lby=spawn.top+ts,uby=spawn.bottom-ts;
+    const minD=100*zoom,maxD=300*zoom;
+    let placed=false;
+    for(let i=0;i<500;i++){
+      const nx=lbx+Math.random()*(ubx-lbx),ny=lby+Math.random()*(uby-lby);
+      const d=dist(nx,ny,tx,ty);
+      if(d>minD&&d<maxD){tx=nx;ty=ny;placed=true;break}
+    }
+    if(!placed){tx=lbx+Math.random()*(ubx-lbx);ty=lby+Math.random()*(uby-lby)}
   }
-  tx=lbx+Math.random()*(ubx-lbx);ty=lby+Math.random()*(uby-lby);
+  curTarget={id:servedID,fx:ox,fy:oy,d:dist(ox,oy,tx,ty)};
 }
 
 function hit(){return dist(cx,cy,tx,ty)<(cursorSize+targetSize)/2}
@@ -259,6 +352,13 @@ function eat(now){
   hp=Math.min(hp+val,maxHp*2);
   balls++;
   eatLog.push([elapsed,rtMs]);
+  if(isAdp()&&curTarget&&curTarget.id>0){
+    bits+=curTarget.id;
+    if(rtMs>cheese&&rtMs<2500){
+      const ang=Math.atan2(ty-curTarget.fy,tx-curTarget.fx);
+      adpUpdate(curTarget.id,rtMs,adpSector(ang),adpBand(curTarget.d));
+    }
+  }
   lastEatT=now;
   eatSound();
   spawnTarget();
@@ -287,9 +387,12 @@ function maxEatWindow(){
 function buildResult(){
   const rts=eatLog.filter(e=>e[1]>0).map(e=>e[1]);
   const avgRt=rts.length?rts.reduce((a,b)=>a+b,0)/rts.length:0;
+  const adpX=isAdp()?{tpt:elapsed>0?Math.round(bits/elapsed*100)/100:0,
+    fa:Math.round(adp.a),fb:Math.round(adp.b)}:{};
   return{
     ts:new Date().toISOString(),mode:preset.key,
-    score:Math.round(score*100)/100,balls,elapsed:Math.round(elapsed*100)/100,
+    score:isAdp()?Math.round(bits*10)/10:Math.round(score*100)/100,
+    balls,elapsed:Math.round(elapsed*100)/100,...adpX,
     avgRt:Math.round(avgRt*10)/10,
     ballsS:avgRt>0?Math.round(100000/avgRt)/100:0,
     avgEat:elapsed>0?Math.round(score/elapsed*100)/100:0,
@@ -356,22 +459,26 @@ function text(s,x,y,size,col,align="left",bold=false){
 function drawPregameHud(){
   text("Overlap the ball to start",vw/2,outer.y-46,24,"#d2d2dc","center",true);
   text(preset.key+" — "+preset.name,vw/2,outer.y-20,13,"#787887","center");
-  text("R restart · E menu · 1-6 modes",vw/2,outer.y+outer.h+30,12,"#787887","center");
+  text("R restart · E menu · 1-7 modes",vw/2,outer.y+outer.h+30,12,"#787887","center");
   if(rawInput===false)text("⚠ raw input unavailable — browser fallback in use",vw/2,outer.y+outer.h+52,12,"#ffb43c","center");
 }
 
 function drawIngameHud(){
   const bx=outer.x,bw=outer.w;
-  const frac=clamp(hp/maxHp,0,2);
-  ctx.fillStyle="#1c1c26";ctx.fillRect(bx,outer.y-18,bw,10);
-  ctx.fillStyle=frac<0.3?"#f03c3c":"#50dc78";
-  ctx.fillRect(bx,outer.y-18,bw*Math.min(frac,1),10);
-  if(frac>1){ctx.fillStyle="#a0ffc8";ctx.fillRect(bx,outer.y-18,bw*(frac-1),10)}
-  text(fmt(score,0),bx,outer.y-32,26,"#ffffff","left",true);
+  if(settings.hpbar){
+    const frac=clamp(hp/maxHp,0,2);
+    ctx.fillStyle="#1c1c26";ctx.fillRect(bx,outer.y-18,bw,10);
+    ctx.fillStyle=frac<0.3?"#f03c3c":"#50dc78";
+    ctx.fillRect(bx,outer.y-18,bw*Math.min(frac,1),10);
+    if(frac>1){ctx.fillStyle="#a0ffc8";ctx.fillRect(bx,outer.y-18,bw*(frac-1),10)}
+  }
+  text(isAdp()?fmt(bits,1)+" bits":fmt(score,0),bx,outer.y-32,26,"#ffffff","left",true);
   text(fmt(elapsed,1)+"s",bx+bw,outer.y-32,20,"#d2d2dc","right");
   const rts=eatLog.filter(e=>e[1]>0);
   const avg=rts.length?rts.reduce((a,b)=>a+b[1],0)/rts.length:0;
-  text(balls+" balls"+(avg?" · "+fmt(avg,0)+"ms avg":""),bx,outer.y+outer.h+24,13,"#787887");
+  let sub=balls+" balls"+(avg?" · "+fmt(avg,0)+"ms avg":"");
+  if(isAdp())sub+=" · ID "+fmt(servedID,1)+(elapsed>1?" · "+fmt(bits/elapsed,1)+" b/s":"");
+  text(sub,bx,outer.y+outer.h+24,13,"#787887");
   if(rawInput===false)text("⚠ raw input off",bx+bw,outer.y+outer.h+24,12,"#ffb43c","right");
 }
 
@@ -466,7 +573,7 @@ document.addEventListener("keydown",e=>{
   }else if(k==="f"){
     if(document.fullscreenElement)document.exitFullscreen();
     else document.documentElement.requestFullscreen().catch(()=>{});
-  }else if(k>="1"&&k<="6"){
+  }else if(k>="1"&&k<="7"){
     selectMode(+k-1);
     if($("menu").hidden){resetGame();if(!locked)lockPointer()}
   }
@@ -497,6 +604,7 @@ function readSettingsInputs(){
   settings.dpi=clamp(+$("dpi").value||800,100,26000);
   settings.cm360=clamp(+$("cm360").value||30,3,200);
   settings.sound=$("sound").checked;
+  settings.hpbar=$("hpbar").checked;
   saveJSON(LS_SET,settings);
   layout();
 }
@@ -557,19 +665,59 @@ function renderHistory(){
 }
 
 function showResults(r,prevBest){
+  const a=r.mode==="ADP";
   $("rmode").textContent=preset.key+" — "+preset.name.toUpperCase();
-  $("rscore").textContent=fmt(r.score,0);
+  $("rscore").textContent=a?fmt(r.score,1)+" bits":fmt(r.score,0);
   $("rbest").innerHTML=r.score>prevBest&&prevBest>0?"<span class='best'>NEW BEST</span>"
-    :prevBest>0?"<div class='prev'>best "+fmt(Math.max(prevBest,r.score),0)+"</div>":"<span class='best'>FIRST RUN</span>";
-  const tiles=[
+    :prevBest>0?"<div class='prev'>best "+fmt(Math.max(prevBest,r.score),a?1:0)+"</div>":"<span class='best'>FIRST RUN</span>";
+  const tiles=a?[
+    ["THROUGHPUT",fmt(r.tpt,2),"bits/s"],["BALLS",r.balls,""],["TIME",fmt(r.elapsed,1),"s"],
+    ["AVG REACTION",fmt(r.avgRt,0),"ms"],["BASE LATENCY",r.fa,"ms"],["FLICK COST",r.fb,"ms/bit"],
+  ]:[
     ["BALLS",r.balls,""],["TIME",fmt(r.elapsed,1),"s"],["AVG REACTION",fmt(r.avgRt,0),"ms"],
     ["BALLS / SEC",fmt(r.ballsS,2),""],["SCORE / SEC",fmt(r.avgEat,1),""],["PEAK 5s RATE",fmt(r.maxEat,1),"/s"],
   ];
   $("rgrid").innerHTML=tiles.map(t=>"<div class='tile'><div class='l'>"+t[0]+"</div><div class='v'>"+t[1]+"<span class='u'>"+t[2]+"</span></div></div>").join("");
   renderChart(r);
+  $("heatcard").hidden=!a;
+  if(a)renderHeatmap();
   $("rtable").style.display="none";
   $("chart").style.display="block";
   show($("results"));
+}
+
+function lerpCol(c1,c2,t){
+  const h=c=>[parseInt(c.slice(1,3),16),parseInt(c.slice(3,5),16),parseInt(c.slice(5,7),16)];
+  const[a1,b1,g1]=h(c1),[a2,b2,g2]=h(c2);
+  return"rgb("+Math.round(a1+(a2-a1)*t)+","+Math.round(b1+(b2-b1)*t)+","+Math.round(g1+(g2-g1)*t)+")";
+}
+
+function arcPath(cx0,cy0,r0,r1,a0,a1){
+  const p=(r,a)=>fmt(cx0+r*Math.cos(a),1)+" "+fmt(cy0+r*Math.sin(a),1);
+  return"M"+p(r1,a0)+"A"+r1+" "+r1+" 0 0 1 "+p(r1,a1)+"L"+p(r0,a1)+"A"+r0+" "+r0+" 0 0 0 "+p(r0,a0)+"Z";
+}
+
+function renderHeatmap(){
+  const s=adpSigma(),C=130,R=[36,64,90,116];
+  const ARROWS=["→","↘","↓","↙","←","↖","↑","↗"];
+  const BANDNAMES=["near","mid","far"];
+  let cells="";
+  for(let i=0;i<8;i++){
+    const a0=i*Math.PI/4-Math.PI/8,a1=i*Math.PI/4+Math.PI/8;
+    for(let b=0;b<3;b++){
+      const c=adpCell(i,b);
+      let fill="#22222c",tt=ARROWS[i]+" "+BANDNAMES[b]+" · no data yet";
+      if(c.n>=3){
+        const t=clamp(c.r/(1.2*s),-1,1);
+        fill=t>=0?lerpCol("#2a2a35","#c58218",t):lerpCol("#2a2a35","#2489cc",-t);
+        tt=ARROWS[i]+" "+BANDNAMES[b]+" · "+(c.r>=0?"+":"")+Math.round(c.r)+"ms vs your model (n="+c.n+")";
+      }
+      cells+="<path d='"+arcPath(C,C,R[b],R[b+1],a0,a1)+"' fill='"+fill+"' stroke='#16161f' stroke-width='2'><title>"+tt+"</title></path>";
+    }
+    const lx=C+126*Math.cos(i*Math.PI/4),ly=C+126*Math.sin(i*Math.PI/4);
+    cells+="<text x='"+fmt(lx,1)+"' y='"+fmt(ly+4,1)+"' fill='#787887' font-size='12' text-anchor='middle'>"+ARROWS[i]+"</text>";
+  }
+  $("heatmap").innerHTML="<svg width='260' height='260' viewBox='0 0 260 260' style='max-width:100%'>"+cells+"</svg>";
 }
 
 let chartPts=[];
@@ -648,6 +796,9 @@ function wireSensInputs(){
   $("dpi").value=settings.dpi;
   $("cm360").value=settings.cm360;
   $("sound").checked=settings.sound!==false;
+  $("hpbar").checked=settings.hpbar!==false;
+  $("hpbar").addEventListener("change",()=>{settings.hpbar=$("hpbar").checked;saveJSON(LS_SET,settings)});
+  $("sound").addEventListener("change",()=>{settings.sound=$("sound").checked;saveJSON(LS_SET,settings)});
   let guard=false;
   const syncFromCm=()=>{
     if(guard)return;guard=true;
@@ -691,7 +842,7 @@ function init(){
     }
   });
   wireSensInputs();
-  selectMode(clamp(settings.mode,0,5));
+  selectMode(clamp(settings.mode,0,PRESETS.length-1));
   resetGame();
   showMenu();
   requestAnimationFrame(tick);
