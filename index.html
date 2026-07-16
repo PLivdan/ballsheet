@@ -18,7 +18,7 @@
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--mono)}
-canvas{display:block;position:fixed;inset:0}
+#game{display:block;position:fixed;inset:0}
 .screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;overflow-y:auto;background:rgba(10,10,16,.82);backdrop-filter:blur(6px);z-index:10}
 .screen[hidden]{display:none}
 .wrap{width:min(920px,94vw);padding:40px 0 60px}
@@ -32,23 +32,28 @@ h1 .b1{color:var(--cursor)} h1 .b2{color:var(--target)}
 .row label{flex:1;font-size:13px;color:var(--text)}
 input,select{background:var(--panel2);border:1px solid var(--line);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:14px;padding:8px 10px;width:110px}
 select{width:150px}
-input:focus,select:focus{outline:none;border-color:var(--accent)}
+input:focus,select:focus{outline:none;border-color:var(--cursor)}
+input[type=checkbox]{accent-color:var(--cursor)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--cursor);outline-offset:2px}
+#hero{display:flex;justify-content:center;margin-bottom:10px}
+#demo{width:240px;height:120px;border-radius:8px}
 .hint{font-size:11px;color:var(--dim);margin:-4px 0 10px}
 .divider{display:flex;align-items:center;gap:10px;color:var(--dim);font-size:11px;letter-spacing:1px;margin:16px 0 12px}
 .divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line)}
 .readout{background:var(--panel2);border-radius:6px;padding:10px 12px;font-size:13px;line-height:1.7;margin-top:12px}
 .readout b{color:var(--cursor);font-size:16px}
 .readout .eq{color:var(--dim)}
-.mode{display:flex;gap:10px;width:100%;text-align:left;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;color:var(--text);font-family:var(--mono);cursor:pointer;align-items:baseline}
+.mode{display:flex;gap:10px;width:100%;text-align:left;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 12px;margin-bottom:8px;color:var(--text);font-family:var(--mono);cursor:pointer;align-items:center}
 .mode:hover{border-color:var(--dim)}
-.mode.sel{border-color:var(--accent);background:#1b2030}
-.mode .k{color:var(--accent);font-weight:700;width:14px}
-.mode .nm{font-weight:700;width:150px}
+.mode.sel{border-color:var(--cursor);background:#17222e}
+.mode .k{color:var(--cursor);font-weight:700;width:14px}
+.mode .g{flex:none;width:30px;height:20px}
+.mode .nm{font-weight:700;width:132px}
 .mode .ds{color:var(--dim);font-size:11px;flex:1}
 .mode .pb{color:var(--hp);font-size:11px;white-space:nowrap}
 .playrow{display:flex;justify-content:center;margin:26px 0 8px}
-#play{background:var(--accent);color:#fff;border:none;border-radius:10px;font-family:var(--mono);font-size:19px;font-weight:700;letter-spacing:2px;padding:16px 54px;cursor:pointer}
-#play:hover{filter:brightness(1.15)}
+#play{background:var(--target);color:#fff;border:none;border-radius:10px;font-family:var(--mono);font-size:19px;font-weight:700;letter-spacing:2px;padding:16px 54px;cursor:pointer}
+#play:hover{filter:brightness(1.12)}
 .keys{text-align:center;color:var(--dim);font-size:12px;margin-bottom:26px}
 kbd{background:var(--panel2);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:1px 6px;font-family:var(--mono);font-size:11px;color:var(--text)}
 table{width:100%;border-collapse:collapse;font-size:12px}
@@ -79,8 +84,8 @@ td.num,th.num{text-align:right}
 #rtable{max-height:220px;overflow-y:auto;display:none}
 .btnrow{display:flex;gap:12px;justify-content:center;margin-top:24px}
 .btnrow button{background:var(--panel);border:1px solid var(--line);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:14px;padding:12px 26px;cursor:pointer}
-.btnrow button:hover{border-color:var(--accent)}
-.btnrow button.pri{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
+.btnrow button:hover{border-color:var(--cursor)}
+.btnrow button.pri{background:var(--target);border-color:var(--target);color:#fff;font-weight:700}
 #paused .box,#touchwall .box{margin:auto;text-align:center}
 #paused h2,#touchwall h2{font-size:34px;letter-spacing:6px;color:#fff}
 #paused p,#touchwall p{color:var(--dim);margin-top:12px;font-size:14px;line-height:1.8}
@@ -91,6 +96,7 @@ td.num,th.num{text-align:right}
 
 <div id="menu" class="screen">
   <div class="wrap">
+    <div id="hero"><canvas id="demo" width="480" height="240"></canvas></div>
     <h1><span class="b1">BALL</span><span class="b2">SHEET</span></h1>
     <div class="cards">
       <div class="card">
@@ -106,12 +112,12 @@ td.num,th.num{text-align:right}
         <p class="hint">type your in-game sensitivity — cm/360 fills in automatically</p>
         <div class="readout" id="readout"></div>
         <div id="rawchip"></div>
+        <div class="row" style="margin-top:14px"><label for="sound">Sounds</label><input id="sound" type="checkbox" checked style="width:auto"></div>
+        <div class="row"><label for="hpbar">HP bar</label><input id="hpbar" type="checkbox" checked style="width:auto"></div>
       </div>
       <div class="card">
         <h2>Game mode</h2>
         <div id="modes"></div>
-        <div class="row" style="margin-top:14px"><label for="sound">Sounds</label><input id="sound" type="checkbox" checked style="width:auto"></div>
-        <div class="row"><label for="hpbar">HP bar</label><input id="hpbar" type="checkbox" checked style="width:auto"></div>
       </div>
     </div>
     <div class="playrow"><button id="play">▶ &nbsp;PLAY</button></div>
@@ -156,7 +162,7 @@ td.num,th.num{text-align:right}
       <p class="hint" style="margin-top:6px">arrows = flick direction · rings = flick length (inner short → outer long) · hover cells for detail</p>
     </div>
     <div class="btnrow">
-      <button class="pri" id="again">play again <kbd style="border-color:#7d9bff">R</kbd></button>
+      <button class="pri" id="again">play again <kbd style="border-color:#ff9ab5">R</kbd></button>
       <button id="tomenu">menu <kbd>E</kbd></button>
     </div>
   </div>
@@ -661,7 +667,7 @@ function renderModes(){
     const b=document.createElement("button");
     b.className="mode"+(i===settings.mode?" sel":"");
     const pb=bestScore(p.key);
-    b.innerHTML="<span class='k'>"+(i+1)+"</span><span class='nm'>"+p.key+" · "+p.name+
+    b.innerHTML="<span class='k'>"+(i+1)+"</span>"+modeGlyph(p)+"<span class='nm'>"+p.key+" · "+p.name+
       "</span><span class='ds'>"+p.desc+"</span>"+(pb?"<span class='pb'>PB "+fmt(pb,0)+"</span>":"");
     b.addEventListener("click",()=>selectMode(i));
     el.appendChild(b);
@@ -816,6 +822,52 @@ $("tbl").addEventListener("click",()=>{
   c.style.display=showT?"none":"block";
   $("tbl").textContent=showT?"chart":"table";
 });
+
+const demoC=$("demo"),demoCtx=demoC.getContext("2d");
+demoCtx.scale(2,2);
+const dm={tx:180,ty:60,cx:44,cy:64,flash:0,fx:0,fy:0};
+function demoSpawn(){
+  let nx,ny,tries=0;
+  do{nx=26+Math.random()*188;ny=22+Math.random()*76;tries++}
+  while(dist(nx,ny,dm.tx,dm.ty)<70&&tries<50);
+  dm.tx=nx;dm.ty=ny;
+}
+function demoDraw(){
+  demoCtx.clearRect(0,0,240,120);
+  demoCtx.fillStyle="#1c1c26";demoCtx.fillRect(0,0,240,120);
+  demoCtx.strokeStyle="#32323c";demoCtx.lineWidth=2;demoCtx.strokeRect(14,12,212,96);
+  demoCtx.fillStyle="#e65078";
+  demoCtx.beginPath();demoCtx.arc(dm.tx,dm.ty,9,0,7);demoCtx.fill();
+  demoCtx.fillStyle="#64c8ff";
+  demoCtx.beginPath();demoCtx.arc(dm.cx,dm.cy,6,0,7);demoCtx.fill();
+  if(dm.flash>0){
+    demoCtx.strokeStyle="rgba(100,200,255,"+fmt(dm.flash/22,2)+")";
+    demoCtx.lineWidth=1.5;
+    demoCtx.beginPath();demoCtx.arc(dm.fx,dm.fy,10+(22-dm.flash)*0.9,0,7);demoCtx.stroke();
+  }
+}
+function demoTick(){
+  requestAnimationFrame(demoTick);
+  if($("menu").hidden||document.hidden)return;
+  if(dm.flash>0)dm.flash--;
+  dm.cx+=(dm.tx-dm.cx)*0.055;dm.cy+=(dm.ty-dm.cy)*0.055;
+  if(dist(dm.cx,dm.cy,dm.tx,dm.ty)<10){dm.fx=dm.tx;dm.fy=dm.ty;dm.flash=22;demoSpawn()}
+  demoDraw();
+}
+if(matchMedia("(prefers-reduced-motion: reduce)").matches){
+  dm.cx=dm.tx-9;dm.cy=dm.ty-2;demoDraw();
+}else{
+  demoSpawn();demoTick();
+}
+
+function modeGlyph(p){
+  const s=v=>Math.max(1.6,Math.min(8,v*0.115));
+  const rc=s(p.cursor),rt=s(p.target);
+  const cx2=19,cx1=cx2-rt-rc+Math.min(rc,rt)*0.7;
+  return"<svg class='g' viewBox='0 0 30 20' aria-hidden='true'>"+
+    "<circle cx='"+cx2+"' cy='10' r='"+fmt(rt,1)+"' fill='#e65078'/>"+
+    "<circle cx='"+fmt(cx1,1)+"' cy='10' r='"+fmt(rc,1)+"' fill='#64c8ff' fill-opacity='0.92'/></svg>";
+}
 
 function wireSensInputs(){
   const gs=$("gamesel");
