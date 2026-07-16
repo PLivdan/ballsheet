@@ -146,13 +146,14 @@ td.num,th.num{text-align:right}
     <div class="chartcard" id="heatcard" hidden style="margin-top:12px;text-align:center">
       <div class="top">
         <div class="legend">
-          <span><i style="background:#2489cc"></i>faster than your model</span>
-          <span><i style="background:#2a2a35"></i>on model</span>
-          <span><i style="background:#c58218"></i>slower — trained more</span>
+          <span><i style="background:#2489cc"></i>strong for you</span>
+          <span><i style="background:#2a2a35"></i>typical</span>
+          <span><i style="background:#c58218"></i>weak — focus here</span>
         </div>
       </div>
       <div id="heatmap"></div>
-      <p class="hint" style="margin-top:6px">movement-direction residuals · rings = flick distance (near / mid / far) · hover cells for detail</p>
+      <div id="heatsummary" style="font-size:13px;margin-top:8px;line-height:1.7"></div>
+      <p class="hint" style="margin-top:6px">arrows = flick direction · rings = flick length (inner short → outer long) · hover cells for detail</p>
     </div>
     <div class="btnrow">
       <button class="pri" id="again">play again <kbd style="border-color:#7d9bff">R</kbd></button>
@@ -212,17 +213,20 @@ let eatLog=[],lastResult=null;
 let actx=null;
 let bits=0,servedID=0;
 const LS_ADP="bs_adp_model_v1";
-const ADP_SIZES=[18,26,36,48],ADP_BANDS=[140,260];
+const ADP_DBANDS=[[0.18,0.40],[0.40,0.63],[0.63,1.05]];
+let adpPace=600;
+function adpBase(){return Math.min(spawn.right-spawn.left,spawn.bottom-spawn.top)}
 let adp=loadJSON(LS_ADP)||{a:280,b:140,s2:14400,cells:Array.from({length:24},()=>({r:0,n:0}))};
 
 function isAdp(){return preset.key==="ADP"}
 function adpSigma(){return clamp(Math.sqrt(adp.s2),30,400)}
 function adpCell(sector,band){return adp.cells[sector*3+band]}
-function adpBand(d){return d<ADP_BANDS[0]*zoom?0:d<ADP_BANDS[1]*zoom?1:2}
+function adpBand(d){const b=adpBase();return d<0.40*b?0:d<0.63*b?1:2}
 function adpSector(angle){return((Math.round(angle/(Math.PI/4))%8)+8)%8}
 
 let adpFit={n:0,sx:0,sxx:0,sy:0,sxy:0};
 function adpUpdate(id,mt,sector,band){
+  adpPace=0.8*adpPace+0.2*mt;
   const f=adpFit,L=0.97;
   f.n=f.n*L+1;f.sx=f.sx*L+id;f.sxx=f.sxx*L+id*id;f.sy=f.sy*L+mt;f.sxy=f.sxy*L+id*mt;
   const den=f.n*f.sxx-f.sx*f.sx;
@@ -252,35 +256,51 @@ function adpPickSector(){
   return 7;
 }
 
+function adpPickBand(){
+  const s=adpSigma(),w=[];
+  for(let b=0;b<3;b++){
+    let pos=0,n=0;
+    for(let i=0;i<8;i++){const c=adpCell(i,b);if(c.n>=3){pos+=Math.max(0,c.r);n++}}
+    w.push(1+2*clamp(n?pos/(n*s):0,0,1));
+  }
+  const tot=w[0]+w[1]+w[2];
+  let r=Math.random()*tot;
+  for(let b=0;b<3;b++){r-=w[b];if(r<=0)return b}
+  return 2;
+}
+
 function adpSpawn(){
   const tEq=elapsed>0.2?preset.score/(preset.pressure*Math.log(1+elapsed)):1.2;
-  const tBudget=clamp(tEq,0.25,1.2)*1000;
-  const idStar=clamp((tBudget-adp.a-0.772*adpSigma())/adp.b,1.0,6.5);
-  const wt=ADP_SIZES[Math.floor(Math.random()*ADP_SIZES.length)]*zoom;
-  targetSize=wt;
-  const wEff=cursorSize+wt;
-  const maxD=Math.min(spawn.right-spawn.left,spawn.bottom-spawn.top)*0.85;
-  const D=clamp(wEff*(Math.pow(2,idStar)-1),70*zoom,maxD);
+  const tTarget=Math.max(clamp(tEq,0.25,1.2)*1000,0.93*adpPace);
+  const idTarget=clamp((tTarget-adp.a)/adp.b,1.0,6.5);
+  const band=adpPickBand(),bd=ADP_DBANDS[band],base=adpBase();
+  const dFeas=0.9*Math.max(
+    dist(spawn.left,spawn.top,tx,ty),dist(spawn.right,spawn.top,tx,ty),
+    dist(spawn.left,spawn.bottom,tx,ty),dist(spawn.right,spawn.bottom,tx,ty));
+  const D=clamp((bd[0]+Math.random()*(bd[1]-bd[0]))*base,70*zoom,dFeas);
+  const wEff=D/(Math.pow(2,idTarget)-1);
+  targetSize=clamp(wEff-cursorSize,10*zoom,90*zoom);
+  const wAct=cursorSize+targetSize;
   const ts=targetSize;
   const lbx=spawn.left+ts,ubx=spawn.right-ts,lby=spawn.top+ts,uby=spawn.bottom-ts;
   const sector=adpPickSector(),secA=sector*Math.PI/4;
   for(let i=0;i<40;i++){
     const a=secA+(Math.random()-0.5)*Math.PI/4;
     const nx=tx+D*Math.cos(a),ny=ty+D*Math.sin(a);
-    if(nx>=lbx&&nx<=ubx&&ny>=lby&&ny<=uby){servedID=Math.log2(D/wEff+1);tx=nx;ty=ny;return}
+    if(nx>=lbx&&nx<=ubx&&ny>=lby&&ny<=uby){servedID=Math.log2(D/wAct+1);tx=nx;ty=ny;return}
   }
   for(let i=0;i<80;i++){
     const a=Math.random()*2*Math.PI;
     const nx=tx+D*Math.cos(a),ny=ty+D*Math.sin(a);
-    if(nx>=lbx&&nx<=ubx&&ny>=lby&&ny<=uby){servedID=Math.log2(D/wEff+1);tx=nx;ty=ny;return}
+    if(nx>=lbx&&nx<=ubx&&ny>=lby&&ny<=uby){servedID=Math.log2(D/wAct+1);tx=nx;ty=ny;return}
   }
   for(let i=0;i<200;i++){
     const nx=lbx+Math.random()*(ubx-lbx),ny=lby+Math.random()*(uby-lby);
     const d=dist(nx,ny,tx,ty);
-    if(d>70*zoom){servedID=Math.log2(d/wEff+1);tx=nx;ty=ny;return}
+    if(d>70*zoom){servedID=Math.log2(d/wAct+1);tx=nx;ty=ny;return}
   }
   tx=lbx+Math.random()*(ubx-lbx);ty=lby+Math.random()*(uby-lby);
-  servedID=Math.log2(Math.max(dist(cx,cy,tx,ty),1)/wEff+1);
+  servedID=Math.log2(Math.max(dist(cx,cy,tx,ty),1)/wAct+1);
 }
 
 function loadJSON(k){try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}}
@@ -321,6 +341,7 @@ function resetGame(){
   tx=vw/2;ty=vh/2;
   hp=maxHp;score=0;balls=0;elapsed=0;eatLog=[];
   bits=0;servedID=0;curTarget=null;
+  adpPace=Math.max(400,adp.a+adp.b*2.2);
   hideAll();
 }
 
@@ -700,17 +721,19 @@ function arcPath(cx0,cy0,r0,r1,a0,a1){
 function renderHeatmap(){
   const s=adpSigma(),C=130,R=[36,64,90,116];
   const ARROWS=["→","↘","↓","↙","←","↖","↑","↗"];
-  const BANDNAMES=["near","mid","far"];
+  const BANDNAMES=["short","mid","long"];
   let cells="";
+  const scored=[];
   for(let i=0;i<8;i++){
     const a0=i*Math.PI/4-Math.PI/8,a1=i*Math.PI/4+Math.PI/8;
     for(let b=0;b<3;b++){
       const c=adpCell(i,b);
-      let fill="#22222c",tt=ARROWS[i]+" "+BANDNAMES[b]+" · no data yet";
+      let fill="#22222c",tt=ARROWS[i]+" "+BANDNAMES[b]+" flicks · not enough data yet";
       if(c.n>=3){
         const t=clamp(c.r/(1.2*s),-1,1);
         fill=t>=0?lerpCol("#2a2a35","#c58218",t):lerpCol("#2a2a35","#2489cc",-t);
-        tt=ARROWS[i]+" "+BANDNAMES[b]+" · "+(c.r>=0?"+":"")+Math.round(c.r)+"ms vs your model (n="+c.n+")";
+        tt=ARROWS[i]+" "+BANDNAMES[b]+" flicks · "+Math.round(Math.abs(c.r))+"ms "+(c.r>=0?"slower":"faster")+" than expected for you ("+c.n+" balls)";
+        scored.push({i,b,r:c.r});
       }
       cells+="<path d='"+arcPath(C,C,R[b],R[b+1],a0,a1)+"' fill='"+fill+"' stroke='#16161f' stroke-width='2'><title>"+tt+"</title></path>";
     }
@@ -718,6 +741,15 @@ function renderHeatmap(){
     cells+="<text x='"+fmt(lx,1)+"' y='"+fmt(ly+4,1)+"' fill='#787887' font-size='12' text-anchor='middle'>"+ARROWS[i]+"</text>";
   }
   $("heatmap").innerHTML="<svg width='260' height='260' viewBox='0 0 260 260' style='max-width:100%'>"+cells+"</svg>";
+  scored.sort((a,b)=>b.r-a.r);
+  const name=c=>ARROWS[c.i]+" "+BANDNAMES[c.b];
+  const weak=scored.filter(c=>c.r>0.25*s).slice(0,2);
+  const strong=scored.filter(c=>c.r<-0.25*s);
+  let out="";
+  if(weak.length)out+="<span style='color:#c58218'>focus on: "+weak.map(c=>name(c)+" flicks (+"+Math.round(c.r)+"ms)").join(" · ")+"</span>";
+  if(strong.length)out+=(out?"<br>":"")+"<span style='color:#2489cc'>strongest: "+name(strong[strong.length-1])+" flicks ("+Math.round(strong[strong.length-1].r)+"ms)</span>";
+  if(!out)out="<span style='color:#787887'>no clear weak spots yet — keep playing and this fills in</span>";
+  $("heatsummary").innerHTML=out;
 }
 
 let chartPts=[];
