@@ -1,25 +1,25 @@
 # BallSheet
 
-A browser aim trainer with **true 1:1 sensitivity matching** — what your hand does here is exactly what it does in your game.
+A browser aim trainer with **true 1:1 sensitivity matching**. What your hand does here is exactly what it does in your game.
 
 **Play it: https://plivdan.github.io/ballsheet/**
 
-Overlap your cursor ball with the target ball to eat it. Every eat scores points and restores HP. HP drains faster the longer you survive — when it hits zero, the run ends.
+Overlap your cursor ball with the target ball to eat it. Every eat scores points and restores HP. HP drains faster the longer you survive. When it hits zero, the run ends.
 
 ## Why sensitivity matching matters
 
 Most browser aim games use your OS pointer, so your mousepad-to-screen mapping depends on Windows settings, pointer acceleration, and window size. Aim training only transfers to your game if the *physical distance your hand moves* maps identically.
 
-BallSheet uses the Pointer Lock API with `unadjustedMovement` (raw input — no OS acceleration, no pointer scaling) and maps counts to the cursor in one of two selectable ways:
+BallSheet uses the Pointer Lock API with `unadjustedMovement` (raw input: no OS acceleration, no pointer scaling) and maps counts to the cursor in one of two selectable ways:
 
-- **Match my game (FOV)** — the default. The play field is treated as a slice of your in-game view: `px per count = fieldWidth × 360 ÷ (fieldFOV × counts/360)`, with the field calibrated to the fraction of a 103°-hFOV screen it would occupy. A flick across a ball takes exactly the hand movement it would take in your game near the crosshair — and because sensitivity is anchored to the field rather than the screen, the feel is identical on every monitor, window size, and Windows scaling factor. Set the FOV field to your game's horizontal FOV.
-- **Classic — 360° = screen** — the original BallSheet mapping: one full turn of mouse travel sweeps your screen width. Roughly 3.5× more hand travel than in-game feel at typical FOVs, and device-dependent (the fixed-size field is a larger share of smaller screens). Kept for continuity with the desktop original.
+- **Match my game (FOV)**: the default. The play field is treated as a slice of your in-game view. `px per count = fieldWidth × 360 ÷ (fieldFOV × counts/360)`, with the field calibrated to the fraction of a 103°-hFOV screen it would occupy. A flick across a ball takes exactly the hand movement it would take in your game near the crosshair, and because sensitivity is anchored to the field rather than the screen, the feel is identical on every monitor, window size, and Windows scaling factor. Set the FOV field to your game's horizontal FOV.
+- **Classic (360° = screen)**: the original BallSheet mapping. One full turn of mouse travel sweeps your screen width. Roughly 3.5× more hand travel than in-game feel at typical FOVs, and device-dependent (the fixed-size field is a larger share of smaller screens). Kept for continuity with the desktop original.
 
 ```
 counts per 360° = DPI × cm/360 ÷ 2.54
 ```
 
-Enter your DPI and cm/360 — or just pick your game and type your in-game sens, and the converter fills in cm/360 using the game's yaw value:
+Enter your DPI and cm/360, or just pick your game and type your in-game sens, and the converter fills in cm/360 using the game's yaw value:
 
 | Game | Yaw (°/count) |
 |---|---|
@@ -37,28 +37,28 @@ Yaw values follow [KovaaK's custom sensitivity scales](https://wiki.kovaaks.com/
 
 | Key | Mode | Cursor/Target | HP | Notes |
 |---|---|---|---|---|
-| 1 | SB — Small Ball | 30/30 | 100 | precise flicks |
-| 2 | BB — Big Ball | 30/60 | 100 | the classic |
-| 3 | BBB — Burst Big Ball | 30/60 | 49 | half-HP sprint |
-| 4 | SBB — Shorter Big Ball | 30/60 | 75 | shorter clock |
-| 5 | BC — Ball Cheese | 69/69 | 100 | 69 everything |
-| 6 | SSB — Small Balls | 5/5 | 100 | pixel-perfect |
-| 7 | ADP — Adaptive | 30/varies | 120 | flow-matched difficulty, see below |
+| 1 | SB · Small Ball | 30/30 | 100 | precise flicks |
+| 2 | BB · Big Ball | 30/60 | 100 | the classic |
+| 3 | BBB · Burst Big Ball | 30/60 | 49 | half-HP sprint |
+| 4 | SBB · Shorter Big Ball | 30/60 | 75 | shorter clock |
+| 5 | BC · Ball Cheese | 69/69 | 100 | 69 everything |
+| 6 | SSB · Small Balls | 5/5 | 100 | pixel-perfect |
+| 7 | ADP · Adaptive | 30/varies | 120 | flow-matched difficulty, see below |
 
 ## Adaptive mode
 
-Every spawn is a decision solved online — no calibration phase, no fixed difficulty.
+Every spawn is a decision solved online. No calibration phase, no fixed difficulty.
 
 - **Model**: a live fit of `MT = a + b·ID + f·t + ρ·rev` (with `ID = log₂(D/W + 1)`) updated after every eat with exponential forgetting, persisted across sessions. `a` is your base visuomotor latency, `b` your cost per bit of difficulty, `f` how many ms/s you fade as a run wears on, `ρ` your penalty for direction-reversing flicks. Slow eats are winsorized at 2.5s rather than discarded (so a rough day still teaches the model), the first eats of a session are down-weighted as warmup, and low-data fits shrink toward population priors.
-- **Controller**: flick *distance* is sampled from three bands (short / mid / long) — weakness-weighted but always explored, so long flicks never disappear from your diet. The combined *ball width* then solves the model for the pace target: `W = D / (2^((T−a)/b) − 1)` with `T = max(HP-equilibrium pace, 0.93 × your recent pace)` — anchored to your own frontier so difficulty tracks you instead of pinning at a floor. The width is split randomly between cursor and target each spawn, so both balls breathe; long flicks get proportionally bigger widths and the difficulty in bits stays at your edge. In every mode, targets never spawn overlapping your cursor.
-- **Weakness targeting**: *relative* residuals against your own model (% slower than expected) are tracked per movement direction (8 sectors) × flick length (3 bands), so short and long flicks compare honestly. Spawn direction and length are biased toward cells where you underperform — using shrunken signed means so noise can't masquerade as weakness, capped near 3.5× with a 25% uniform exploration mix so spawns never become predictable. The postgame heatmap names your focus areas outright.
-- **Scoring**: total information transmitted in **bits** (Σ ID), and throughput in bits/s — difficulty-invariant, so the number is a genuine skill measure comparable across sessions, unlike raw score which mostly reflects target size.
+- **Controller**: flick *distance* is sampled from three bands (short / mid / long), weakness-weighted but always explored, so long flicks never disappear from your diet. The combined *ball width* then solves the model for the pace target: `W = D / (2^((T−a)/b) − 1)` with `T = max(HP-equilibrium pace, 0.93 × your recent pace)`, anchored to your own frontier so difficulty tracks you instead of pinning at a floor. The width is split randomly between cursor and target each spawn, so both balls breathe; long flicks get proportionally bigger widths and the difficulty in bits stays at your edge. In every mode, targets never spawn overlapping your cursor.
+- **Weakness targeting**: *relative* residuals against your own model (% slower than expected) are tracked per movement direction (8 sectors) × flick length (3 bands), so short and long flicks compare honestly. Spawn direction and length are biased toward cells where you underperform, using shrunken signed means so noise can't masquerade as weakness, capped near 3.5× with a 25% uniform exploration mix so spawns never become predictable. The postgame heatmap names your focus areas outright.
+- **Scoring**: total information transmitted in **bits** (Σ ID), and throughput in bits/s. Difficulty-invariant, so the number is a genuine skill measure comparable across sessions, unlike raw score which mostly reflects target size.
 
-Scoring: each eat is worth `score_per_ball × min(reaction, cheese) ÷ cheese`, so instant "cheese" eats (target spawning on your cursor) are worth less. HP drain is `pressure × ln(1 + elapsed)` per second — survival gets exponentially harder.
+Scoring: each eat is worth `score_per_ball × min(reaction, cheese) ÷ cheese`, so instant "cheese" eats (target spawning on your cursor) are worth less. HP drain is `pressure × ln(1 + elapsed)` per second, so survival gets exponentially harder.
 
 ## Notes
 
-- Chrome or Edge recommended — they support raw input (`unadjustedMovement`). Other browsers fall back to OS-adjusted movement and show a warning.
+- Chrome or Edge recommended: they support raw input (`unadjustedMovement`). Other browsers fall back to OS-adjusted movement and show a warning.
 - For exact parity with fullscreen native trainers, run your display at 100% scaling.
 - Run history and settings are stored in `localStorage`. Nothing leaves your machine.
 - Keys: `R` restart · `E`/`M` menu · `1–7` modes · `F` fullscreen · `Esc` release mouse.
