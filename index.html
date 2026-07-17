@@ -1030,9 +1030,10 @@ function tile(l,v,u,c){return"<div class='tile'><div class='l'>"+l+"</div><div c
 const GOOD="#50dc78",WARN="#ffb43c";
 function deltaTile(l,val,u,goodWhenPositive,zero){
   if(val==null)return tile(l,"—","");
-  if(Math.abs(val)<zero)return tile(l,"≈0",u);
+  const pct=u==="%";
+  if(Math.abs(val)<zero)return tile(l,"≈0"+(pct?"%":""),pct?"":u);
   const good=goodWhenPositive?val>0:val<0;
-  return tile(l,(val>=0?"+":"")+val,u,good?GOOD:WARN);
+  return tile(l,(val>=0?"+":"")+val+(pct?"%":""),pct?"":u,good?GOOD:WARN);
 }
 
 function showProgress(mk){
