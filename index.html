@@ -791,16 +791,14 @@ function showResults(r,prevBest){
   $("rscore").textContent=a?fmt(r.score,1)+" bits":fmt(r.score,0);
   $("rbest").innerHTML=r.score>prevBest&&prevBest>0?"<span class='best'>NEW BEST</span>"
     :prevBest>0?"<div class='prev'>best "+fmt(Math.max(prevBest,r.score),a?1:0)+"</div>":"<span class='best'>FIRST RUN</span>";
-  const tiles=a?[
-    ["THROUGHPUT",fmt(r.tpt,2),"bits/s"],["BALLS",r.balls,""],["TIME",fmt(r.elapsed,1),"s"],
-    ["AVG REACTION",fmt(r.avgRt,0),"ms"],["BASE LATENCY",r.fa,"ms"],["FLICK COST",r.fb,"ms/bit"],
-    ["FADE",r.fade==null?"—":Math.abs(r.fade)<1?"≈0":(r.fade>=0?"+":"")+r.fade,r.fade==null?"":"ms/s"],
-    ["REVERSAL COST",r.rev==null?"—":Math.abs(r.rev)<20?"≈0":(r.rev>=0?"+":"")+r.rev,r.rev==null?"":"ms"],
-  ]:[
-    ["BALLS",r.balls,""],["TIME",fmt(r.elapsed,1),"s"],["AVG REACTION",fmt(r.avgRt,0),"ms"],
-    ["BALLS / SEC",fmt(r.ballsS,2),""],["SCORE / SEC",fmt(r.avgEat,1),""],["PEAK 5s RATE",fmt(r.maxEat,1),"/s"],
-  ];
-  $("rgrid").innerHTML=tiles.map(t=>"<div class='tile'><div class='l'>"+t[0]+"</div><div class='v'>"+t[1]+"<span class='u'>"+t[2]+"</span></div></div>").join("");
+  $("rgrid").innerHTML=a?
+    tile("THROUGHPUT",fmt(r.tpt,2),"bits/s")+tile("BALLS",r.balls,"")+tile("TIME",fmt(r.elapsed,1),"s")+
+    tile("AVG REACTION",fmt(r.avgRt,0),"ms")+tile("BASE LATENCY",r.fa,"ms")+tile("FLICK COST",r.fb,"ms/bit")+
+    deltaTile("FADE",r.fade,"ms/s",false,1)+
+    deltaTile("REVERSAL COST",r.rev,"ms",false,20)
+    :
+    tile("BALLS",r.balls,"")+tile("TIME",fmt(r.elapsed,1),"s")+tile("AVG REACTION",fmt(r.avgRt,0),"ms")+
+    tile("BALLS / SEC",fmt(r.ballsS,2),"")+tile("SCORE / SEC",fmt(r.avgEat,1),"")+tile("PEAK 5s RATE",fmt(r.maxEat,1),"/s");
   renderChart(r);
   $("heatcard").hidden=!a;
   if(a)renderHeatmap();
@@ -1028,7 +1026,14 @@ function seriesChart(el,pts,o){
   svg.addEventListener("mouseleave",()=>{tip.style.display="none";xh.setAttribute("visibility","hidden")});
 }
 
-function tile(l,v,u){return"<div class='tile'><div class='l'>"+l+"</div><div class='v'>"+v+"<span class='u'>"+(u||"")+"</span></div></div>"}
+function tile(l,v,u,c){return"<div class='tile'><div class='l'>"+l+"</div><div class='v'"+(c?" style='color:"+c+"'":"")+">"+v+"<span class='u'>"+(u||"")+"</span></div></div>"}
+const GOOD="#50dc78",WARN="#ffb43c";
+function deltaTile(l,val,u,goodWhenPositive,zero){
+  if(val==null)return tile(l,"—","");
+  if(Math.abs(val)<zero)return tile(l,"≈0",u);
+  const good=goodWhenPositive?val>0:val<0;
+  return tile(l,(val>=0?"+":"")+val,u,good?GOOD:WARN);
+}
 
 function showProgress(mk){
   const byMode={};
@@ -1049,17 +1054,17 @@ function showProgress(mk){
   const sf=v=>fmt(v,isA?1:0);
   const pbV=Math.max(...scores),pbI=scores.indexOf(pbV);
   const win=scores.slice(-20),sl=theilSen(win);
-  const trend=sl===null?"—":((sl/avg(win)*100>=0?"+":"")+fmt(sl/avg(win)*100,1));
-  let form="—";
+  const tPct=sl===null?null:+fmt(sl/avg(win)*100,1);
+  let fPct=null;
   if(n>=8){
     const l5=avg(scores.slice(-5)),pv=avg(scores.slice(Math.max(0,n-20),n-5));
-    if(pv>0)form=((l5/pv-1>=0?"+":"")+Math.round((l5/pv-1)*100))+"%";
+    if(pv>0)fPct=Math.round((l5/pv-1)*100);
   }
   let html="<div class='grid'>"+
     tile("RUNS",n,"")+
     tile("BEST",sf(pbV)," · "+fmtDate(runs[pbI].ts))+
-    tile("TREND / RUN",trend,trend==="—"?"":"%")+
-    tile("LAST 5 VS PRIOR",form,"")+
+    deltaTile("TREND / RUN",tPct,"%",true,0.05)+
+    deltaTile("LAST 5 VS PRIOR",fPct,"%",true,0.5)+
     tile("BALLS EATEN",runs.reduce((a,r)=>a+r.balls,0),"")+
     tile("TIME PLAYED",fmtDur(runs.reduce((a,r)=>a+r.elapsed,0)),"")+
     "</div>";
@@ -1067,8 +1072,8 @@ function showProgress(mk){
     html+="<div class='grid' style='margin-top:10px'>"+
       tile("BASE LATENCY",Math.round(adp.a),"ms")+
       tile("FLICK COST",Math.round(adp.b),"ms/bit")+
-      tile("FADE",adp.ff.n>10?(Math.abs(adp.f)<1?"≈0":(adp.f>=0?"+":"")+fmt(adp.f,1)):"—",adp.ff.n>10?"ms/s":"")+
-      tile("REVERSAL",adp.rf.n>12?(Math.abs(adp.rho)<20?"≈0":(adp.rho>=0?"+":"")+Math.round(adp.rho)):"—",adp.rf.n>12?"ms":"")+
+      deltaTile("FADE",adp.ff.n>10?+fmt(adp.f,1):null,"ms/s",false,1)+
+      deltaTile("REVERSAL",adp.rf.n>12?Math.round(adp.rho):null,"ms",false,20)+
       "</div>";
   }
   html+="<div class='chartcard'><div class='top'><div class='legend'>"+
