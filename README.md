@@ -67,8 +67,21 @@ Scoring: each eat is worth `score_per_ball × min(reaction, cheese) ÷ cheese`, 
 
 A web reimplementation of **BallSheetOGL** by [helloimxtal](https://github.com/helloimxtal), via an intermediate Python/pygame-ce port. Game constants (mode presets, drain curve, cheese scoring) are kept faithful to the original.
 
+## Path tracking
+
+Every flick's mouse path is analyzed and reduced to a handful of numbers, then discarded:
+
+- **Efficiency**: straight-line distance over actual path traveled. Loose, curved approaches score low.
+- **Overshoot**: flying past the target beside it and hooking back, measured by projecting the path onto the flick axis. The heatmap tags cells where you overshoot.
+- **Reaction and settle**: reaction is the time until your first fast, target-directed movement (filtered so leftover settle motion from the last ball doesn't count). Settle is the rest. Together they decompose your reaction time into noticing and arriving.
+- **Corrections**: distinct re-accelerations after a near-stop, the classic sub-movement count.
+
+These appear as run tiles in every mode, as per-cell fault tags in the adaptive heatmap ("overshoots", "loose path"), and as trend charts on the progress screen.
+
 ## Roadmap
 
-- Session analytics: RT distributions, fatigue curves, throughput trend across sessions
+- Warmup routine with a daily readiness score
+- Export and import of run history, including the desktop Python version's history
+- Seeded challenge codes for head-to-head runs
+- Tracking mode with moving targets
 - Thompson-sampling layer over stimulus regions targeting learning rate rather than weakness level
-- Import history from the desktop Python version

@@ -92,7 +92,8 @@ td.num,th.num{text-align:right}
 .mchip:hover{border-color:var(--dim)}
 .mchip.sel{border-color:var(--cursor);color:var(--cursor)}
 .half{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-@media(max-width:560px){.half{grid-template-columns:1fr}}
+.grid4{grid-template-columns:repeat(4,1fr)}
+@media(max-width:560px){.half{grid-template-columns:1fr}.grid4{grid-template-columns:repeat(2,1fr)}}
 #progress .chartcard{margin-top:12px}
 #ptable{max-height:240px;overflow-y:auto;display:none}
 #paused .box,#touchwall .box{margin:auto;text-align:center}
@@ -250,15 +251,61 @@ let gameStartT=0,lastEatT=0,prevT=0,pauseT=0;
 let eatLog=[],lastResult=null;
 let actx=null;
 let bits=0,servedID=0;
+let trace=[],curPath=0,lastTraceT=0;
+let runEffs=[],runReacts=[],runMoves=[],runOvers=[];
+function median(a){const s=a.slice().sort((x,y)=>x-y);return s[Math.floor(s.length/2)]}
+function pathStats(rtMs){
+  if(trace.length<4)return null;
+  const sx=trace[0].x,sy=trace[0].y;
+  const dxT=tx-sx,dyT=ty-sy;
+  const Dc=Math.hypot(dxT,dyT);
+  const thr=(cursorSize+targetSize)/2;
+  const Dreq=Dc-thr;
+  if(Dreq<40*zoom)return null;
+  const ux=dxT/Dc,uy=dyT/Dc;
+  let maxS=0,peak=0;
+  const steps=[];
+  for(let i=1;i<trace.length;i++){
+    const a=trace[i-1],b=trace[i];
+    const d=Math.hypot(b.x-a.x,b.y-a.y);
+    const dt=Math.max(b.t-a.t,1);
+    const v=d/dt;
+    if(v>peak)peak=v;
+    const toward=d>0.5?((b.x-a.x)*ux+(b.y-a.y)*uy)/d:0;
+    steps.push({t:b.t,v,toward});
+    const s=(b.x-sx)*ux+(b.y-sy)*uy;
+    if(s>maxS)maxS=s;
+  }
+  if(peak<=0)return null;
+  const sEat=(cx-sx)*ux+(cy-sy)*uy;
+  const over=clamp(Math.max(0,maxS-Math.max(sEat,1))/Dreq,0,2);
+  const eff=clamp(Dreq/Math.max(curPath,Dreq),0,1);
+  let react=null;
+  for(const s of steps){
+    if(s.v>=peak*0.12&&s.toward>0.5){react=s.t-trace[0].t;break}
+  }
+  if(react!==null&&(react<0||react>=rtMs))react=null;
+  let cor=0,phase=0;
+  for(const s of steps){
+    if(phase===0){if(s.v>peak*0.4)phase=1}
+    else if(phase===1){if(s.v<peak*0.15)phase=2}
+    else if(s.v>peak*0.4){cor++;phase=1}
+  }
+  return{eff,over,react,move:react!==null?rtMs-react:null,cor};
+}
 const LS_ADP="bs_adp_model_v2";
 const ADP_DBANDS=[[0.18,0.40],[0.40,0.63],[0.63,1.05]];
 let adpPace=600,sessionEats=0,prevAng=null,lastCf=0.43,probeIn=20,lastProbe=false;
 function adpBase(){return Math.min(spawn.right-spawn.left,spawn.bottom-spawn.top)}
 function zfit(){return{n:0,sx:0,sxx:0,sy:0,sxy:0}}
-function freshAdp(){return{v:2,a:280,b:140,s2:0.04,f:0,rho:0,kap:0,ff:zfit(),rf:zfit(),kf:zfit(),pf:zfit(),cells:Array.from({length:24},()=>({r:0,n:0}))}}
+function freshAdp(){return{v:2,a:280,b:140,s2:0.04,f:0,rho:0,kap:0,ff:zfit(),rf:zfit(),kf:zfit(),pf:zfit(),cells:Array.from({length:24},()=>({r:0,n:0,e:null,o:null}))}}
 function loadAdp(){
   const m=loadJSON(LS_ADP);
-  if(m&&m.v===2){if(!m.pf)m.pf=zfit();return m}
+  if(m&&m.v===2){
+    if(!m.pf)m.pf=zfit();
+    m.cells.forEach(c=>{if(c.e===undefined){c.e=null;c.o=null}});
+    return m;
+  }
   const old=loadJSON("bs_adp_model_v1"),fresh=freshAdp();
   if(old){fresh.a=clamp(old.a||280,80,1400);fresh.b=clamp(old.b||140,20,400)}
   return fresh;
@@ -277,7 +324,7 @@ function ewSlope(F,minN){
   const den=F.n*F.sxx-F.sx*F.sx;
   return(F.n>minN&&Math.abs(den)>1e-6)?(F.n*F.sxy-F.sx*F.sy)/den:null;
 }
-function adpUpdate(id,mt,sector,band,t,rev,cf,pr){
+function adpUpdate(id,mt,sector,band,t,rev,cf,pr,ps){
   sessionEats++;
   const w=sessionEats<=5?0.5:1;
   adpPace=0.8*adpPace+0.2*mt;
@@ -308,6 +355,10 @@ function adpUpdate(id,mt,sector,band,t,rev,cf,pr){
   adp.s2=clamp(0.9*adp.s2+0.1*rr*rr,0.0025,0.64);
   const c=adpCell(sector,band);
   c.r=c.n<1?rr:0.8*c.r+0.2*rr;
+  if(ps){
+    c.e=c.e==null?ps.eff:0.8*c.e+0.2*ps.eff;
+    c.o=c.o==null?ps.over:0.8*c.o+0.2*ps.over;
+  }
   c.n++;
   saveJSON(LS_ADP,adp);
 }
@@ -424,6 +475,8 @@ function resetGame(){
   tx=vw/2;ty=vh/2;
   hp=maxHp;score=0;balls=0;elapsed=0;eatLog=[];
   bits=0;servedID=0;curTarget=null;prevAng=null;
+  runEffs=[];runReacts=[];runMoves=[];runOvers=[];
+  trace=[];curPath=0;
   probeIn=16+Math.floor(Math.random()*9);
   adpPace=Math.max(400,adp.a+adp.b*2.2);
   hideAll();
@@ -452,6 +505,8 @@ function spawnTarget(){
     ty=clamp(cy+minC*Math.sin(a),spawn.top+targetSize,spawn.bottom-targetSize);
   }
   curTarget={id:servedID,fx:ox,fy:oy,d:dist(ox,oy,tx,ty),cf:lastCf,pr:lastProbe};
+  const tn=performance.now();
+  trace=[{t:tn,x:cx,y:cy}];curPath=0;lastTraceT=tn;
 }
 
 function hit(){return dist(cx,cy,tx,ty)<(cursorSize+targetSize)/2}
@@ -464,13 +519,21 @@ function eat(now){
   score+=val;
   hp=Math.min(hp+val,maxHp*2);
   balls++;
-  eatLog.push([elapsed,rtMs]);
+  let ps=null;
+  if(rtMs>cheese&&rtMs<6000){
+    ps=pathStats(rtMs);
+    if(ps){
+      runEffs.push(ps.eff);runOvers.push(ps.over);
+      if(ps.react!==null){runReacts.push(ps.react);runMoves.push(ps.move)}
+    }
+  }
+  eatLog.push(ps?[elapsed,rtMs,Math.round(ps.eff*100)/100,ps.react===null?null:Math.round(ps.react)]:[elapsed,rtMs]);
   if(isAdp()&&curTarget&&curTarget.id>0){
     bits+=curTarget.id;
     if(rtMs>cheese&&rtMs<6000){
       const ang=Math.atan2(ty-curTarget.fy,tx-curTarget.fx);
       const rev=prevAng===null?0:(1-Math.cos(ang-prevAng))/2;
-      adpUpdate(curTarget.id,Math.min(rtMs,2500),adpSector(ang),adpBand(curTarget.d),elapsed,rev,curTarget.cf,curTarget.pr);
+      adpUpdate(curTarget.id,Math.min(rtMs,2500),adpSector(ang),adpBand(curTarget.d),elapsed,rev,curTarget.cf,curTarget.pr,ps);
       prevAng=ang;
     }
   }
@@ -506,10 +569,16 @@ function buildResult(){
     fa:Math.round(adp.a),fb:Math.round(adp.b),
     fade:adp.ff.n>10?Math.round(adp.f*10)/10:null,
     rev:adp.rf.n>12?Math.round(adp.rho):null}:{};
+  const pathX={
+    pathEff:runEffs.length>=5?Math.round(avg(runEffs)*100):null,
+    react:runReacts.length>=5?Math.round(median(runReacts)):null,
+    settle:runMoves.length>=5?Math.round(median(runMoves)):null,
+    over:runOvers.length>=5?Math.round(avg(runOvers)*100):null,
+  };
   return{
     ts:new Date().toISOString(),mode:preset.key,
     score:isAdp()?Math.round(bits*10)/10:Math.round(score*100)/100,
-    balls,elapsed:Math.round(elapsed*100)/100,...adpX,
+    balls,elapsed:Math.round(elapsed*100)/100,...adpX,...pathX,
     avgRt:Math.round(avgRt*10)/10,
     ballsS:avgRt>0?Math.round(100000/avgRt)/100:0,
     avgEat:elapsed>0?Math.round(score/elapsed*100)/100:0,
@@ -665,8 +734,14 @@ document.addEventListener("pointerlockerror",()=>{});
 
 document.addEventListener("mousemove",e=>{
   if(!locked||paused||state===POSTGAME)return;
+  const ox=cx,oy=cy;
   cx=clamp(cx+e.movementX*sens,0,vw);
   cy=clamp(cy+e.movementY*sens,0,vh);
+  if(state===INGAME){
+    curPath+=Math.hypot(cx-ox,cy-oy);
+    const tn=performance.now();
+    if(tn-lastTraceT>=5&&trace.length<2400){trace.push({t:tn,x:cx,y:cy});lastTraceT=tn}
+  }
 });
 
 document.addEventListener("visibilitychange",()=>{
@@ -791,13 +866,20 @@ function showResults(r,prevBest){
   $("rscore").textContent=a?fmt(r.score,1)+" bits":fmt(r.score,0);
   $("rbest").innerHTML=r.score>prevBest&&prevBest>0?"<span class='best'>NEW BEST</span>"
     :prevBest>0?"<div class='prev'>best "+fmt(Math.max(prevBest,r.score),a?1:0)+"</div>":"<span class='best'>FIRST RUN</span>";
+  const pathTiles=
+    tile("EFFICIENCY",r.pathEff==null?"—":r.pathEff+"%","")+
+    tile("REACT",r.react==null?"—":r.react,r.react==null?"":"ms")+
+    tile("SETTLE",r.settle==null?"—":r.settle,r.settle==null?"":"ms");
   $("rgrid").innerHTML=a?
     tile("THROUGHPUT",fmt(r.tpt,2),"bits/s")+tile("BALLS",r.balls,"")+tile("TIME",fmt(r.elapsed,1),"s")+
-    tile("AVG REACTION",fmt(r.avgRt,0),"ms")+tile("BASE LATENCY",r.fa,"ms")+tile("FLICK COST",r.fb,"ms/bit")+
+    pathTiles+
+    "</div><div class='grid grid4' style='margin-top:10px'>"+
+    tile("BASE LATENCY",r.fa,"ms")+tile("FLICK COST",r.fb,"ms/bit")+
     deltaTile("FADE",r.fade,"ms/s",false,1)+
     deltaTile("REVERSAL COST",r.rev,"ms",false,20)
     :
     tile("BALLS",r.balls,"")+tile("TIME",fmt(r.elapsed,1),"s")+tile("AVG REACTION",fmt(r.avgRt,0),"ms")+
+    pathTiles+
     tile("BALLS / SEC",fmt(r.ballsS,2),"")+tile("SCORE / SEC",fmt(r.avgEat,1),"")+tile("PEAK 5s RATE",fmt(r.maxEat,1),"/s");
   renderChart(r);
   $("heatcard").hidden=!a;
@@ -833,7 +915,9 @@ function renderHeatmap(){
         const t=clamp(c.r/(1.2*s),-1,1);
         fill=t>=0?lerpCol("#2a2a35","#c58218",t):lerpCol("#2a2a35","#2489cc",-t);
         tt=ARROWS[i]+" "+BANDNAMES[b]+" flicks · "+Math.round(Math.abs(c.r)*100)+"% "+(c.r>=0?"slower":"faster")+" than expected for you ("+c.n+" balls)";
-        scored.push({i,b,r:c.r});
+        if(c.e!=null)tt+=" · path eff "+Math.round(c.e*100)+"%";
+        if(c.o!=null&&c.o>0.12)tt+=" · overshoots";
+        scored.push({i,b,r:c.r,e:c.e,o:c.o});
       }
       cells+="<path d='"+arcPath(C,C,R[b],R[b+1],a0,a1)+"' fill='"+fill+"' stroke='#16161f' stroke-width='2'><title>"+tt+"</title></path>";
     }
@@ -846,7 +930,8 @@ function renderHeatmap(){
   const weak=scored.filter(c=>c.r>0.25*s).slice(0,2);
   const strong=scored.filter(c=>c.r<-0.25*s);
   let out="";
-  if(weak.length)out+="<span style='color:#c58218'>focus on: "+weak.map(c=>name(c)+" flicks (+"+Math.round(c.r*100)+"%)").join(" · ")+"</span>";
+  const fault=c=>c.o!=null&&c.o>0.12?", overshoots":c.e!=null&&c.e<0.78?", loose path":"";
+  if(weak.length)out+="<span style='color:#c58218'>focus on: "+weak.map(c=>name(c)+" flicks (+"+Math.round(c.r*100)+"%"+fault(c)+")").join(" · ")+"</span>";
   if(strong.length)out+=(out?"<br>":"")+"<span style='color:#2489cc'>strongest: "+name(strong[strong.length-1])+" flicks ("+Math.round(strong[strong.length-1].r*100)+"%)</span>";
   if(!out)out="<span style='color:#787887'>no clear weak spots yet. Keep playing and this fills in</span>";
   $("heatsummary").innerHTML=out;
@@ -1092,6 +1177,12 @@ function showProgress(mk){
       "<div class='chartcard' style='margin-top:12px'><div class='top'><div class='legend'><span><i style='background:var(--chart-rt)'></i>base latency (ms)</span><span><i style='background:var(--chart-avg)'></i>trend</span></div></div><div id='pchart3'></div></div>"+
       "<div class='chartcard' style='margin-top:12px'><div class='top'><div class='legend'><span><i style='background:var(--chart-rt)'></i>flick cost (ms/bit)</span><span><i style='background:var(--chart-avg)'></i>trend</span></div></div><div id='pchart4'></div></div></div>";
   }
+  const pathRuns=runs.filter(r=>r.pathEff!=null);
+  if(pathRuns.length>=2){
+    html+="<div class='half' style='margin-top:12px'>"+
+      "<div class='chartcard' style='margin-top:0'><div class='top'><div class='legend'><span><i style='background:var(--chart-rt)'></i>path efficiency (%)</span><span><i style='background:var(--chart-avg)'></i>trend</span></div></div><div id='pchart5'></div></div>"+
+      "<div class='chartcard' style='margin-top:0'><div class='top'><div class='legend'><span><i style='background:var(--chart-rt)'></i>reaction (ms), lower is better</span><span><i style='background:var(--chart-avg)'></i>trend</span></div></div><div id='pchart6'></div></div></div>";
+  }
   body.innerHTML=html;
   const P=(arr,key)=>arr.map(r=>({y:r[key],lab:fmtDate(r.ts)}));
   seriesChart($("pchart1"),P(runs,"score"),{markBest:"max",yfmt:v=>sf(v),tipfmt:v=>sf(v)+(isA?" bits":"")});
@@ -1099,6 +1190,12 @@ function showProgress(mk){
   if(adpRuns.length>=2){
     seriesChart($("pchart3"),P(adpRuns,"fa"),{w:300,h:150,markBest:"min",tipfmt:v=>Math.round(v)+"ms"});
     seriesChart($("pchart4"),P(adpRuns,"fb"),{w:300,h:150,markBest:"min",tipfmt:v=>Math.round(v)+"ms/bit"});
+  }
+  if(pathRuns.length>=2){
+    seriesChart($("pchart5"),P(pathRuns,"pathEff"),{w:300,h:150,markBest:"max",tipfmt:v=>Math.round(v)+"%"});
+    const reactRuns=pathRuns.filter(r=>r.react!=null);
+    if(reactRuns.length>=2)seriesChart($("pchart6"),P(reactRuns,"react"),{w:300,h:150,markBest:"min",tipfmt:v=>Math.round(v)+"ms"});
+    else $("pchart6").innerHTML="<p class='hint' style='padding:24px;text-align:center'>need at least 2 runs here</p>";
   }
   $("ptbl").addEventListener("click",()=>{
     const t=$("ptable"),c=$("pchart1");
